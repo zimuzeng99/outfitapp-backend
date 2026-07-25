@@ -1,0 +1,711 @@
+openapi: 3.0.3
+info:
+  title: Outfitapp API
+  version: 0.0.1-SNAPSHOT
+  description: |
+    Backend API for the Outfitapp wardrobe and outfit-recommendation service.
+
+    **Typical client flow**
+    1. `POST /api/users` — create a user (or use an existing `userId`).
+    2. `POST /api/uploads/batches` — create an upload batch; response includes signed GCS PUT URLs.
+    3. Client uploads each photo with `PUT` to the corresponding `uploadUrl` (GCS, not this API),
+       using the same `Content-Type` supplied when creating the batch.
+    4. `GET /api/uploads/batches/{batchId}` — poll upload status.
+    5. `GET /api/uploads/items/{itemId}/extraction` — poll garment-extraction status for an item.
+    6. `GET /api/uploads/items/{itemId}/garments` — fetch detected garments + metadata once extraction completes.
+    7. `GET /api/users/{userId}/garments` — list the user's wardrobe.
+    8. `POST /api/users/{userId}/outfit-recommendations` — get outfit suggestions for a free-text context.
+
+    **Auth:** none configured today — all endpoints are open.
+    **Errors:** JSON body `{ "code": "<ErrorCode>", "message": "..." }` (see `ErrorResponse`).
+servers:
+  - url: http://localhost:8080
+    description: Local Spring Boot default (port 8080, no context path)
+tags:
+  - name: Users
+    description: User account management
+  - name: Uploads
+    description: Photo upload batches and signed GCS URLs
+  - name: Garments
+    description: Garment extraction status, detected garments, and wardrobe listing
+  - name: Outfits
+    description: Outfit recommendations
+
+paths:
+  /api/users:
+    get:
+      tags: [Users]
+      operationId: getAllUsers
+      summary: List all users
+      responses:
+        "200":
+          description: All users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/UserResponse"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      tags: [Users]
+      operationId: createUser
+      summary: Create a user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUserRequest"
+      responses:
+        "201":
+          description: User created
+          headers:
+            Location:
+              description: URI of the created user (`/api/users/{id}`). Note there is currently no GET-by-id endpoint.
+              schema:
+                type: string
+                format: uri
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserResponse"
+        "400":
+          description: Validation failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Email already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/uploads/batches:
+    post:
+      tags: [Uploads]
+      operationId: createUploadBatch
+      summary: Create an upload batch with signed GCS upload URLs
+      description: |
+        Creates a batch of pending upload items and returns a signed PUT URL per item.
+        The client uploads binary image bytes directly to GCS (not to this API).
+        Practical `contentType` values: `image/jpeg`, `image/png`, `image/heic`, `image/webp`
+        (unknown types fall back to a `.jpg` object key extension).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUploadBatchRequest"
+      responses:
+        "201":
+          description: Batch created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadBatchResponse"
+        "400":
+          description: Validation failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/uploads/batches/{batchId}:
+    get:
+      tags: [Uploads]
+      operationId: getUploadBatch
+      summary: Get upload batch status
+      parameters:
+        - $ref: "#/components/parameters/batchId"
+      responses:
+        "200":
+          description: Batch status with per-item status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadBatchStatusResponse"
+        "404":
+          description: Upload batch not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/uploads/items/{itemId}/extraction:
+    get:
+      tags: [Garments]
+      operationId: getGarmentExtraction
+      summary: Get garment extraction status for an upload item
+      description: |
+        Poll until `status` is `COMPLETED` (or `FAILED`). Extraction runs asynchronously after
+        the photo is uploaded to GCS.
+      parameters:
+        - $ref: "#/components/parameters/itemId"
+      responses:
+        "200":
+          description: Extraction status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GarmentExtractionResponse"
+        "404":
+          description: Upload item or extraction not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/uploads/items/{itemId}/garments:
+    get:
+      tags: [Garments]
+      operationId: getGarmentsForUploadItem
+      summary: List garments detected from an upload item
+      description: Returns full garment details including bounding box, signed image URLs, and fashion metadata.
+      parameters:
+        - $ref: "#/components/parameters/itemId"
+      responses:
+        "200":
+          description: Detected garments (may be empty if extraction has not completed)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/GarmentResponse"
+        "404":
+          description: Upload item not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/users/{userId}/garments:
+    get:
+      tags: [Garments]
+      operationId: getGarmentsForUser
+      summary: List a user's wardrobe garments
+      description: Lightweight summaries suitable for a wardrobe grid (thumbnail + label).
+      parameters:
+        - $ref: "#/components/parameters/userId"
+      responses:
+        "200":
+          description: User garments
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/GarmentSummaryResponse"
+        "404":
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/users/{userId}/outfit-recommendations:
+    post:
+      tags: [Outfits]
+      operationId: recommendOutfits
+      summary: Recommend outfits for a user and context
+      description: |
+        Free-text `context` describes the occasion / vibe (e.g. "casual Friday brunch").
+        Requires the user to already have garments with completed metadata.
+      parameters:
+        - $ref: "#/components/parameters/userId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OutfitRecommendationRequest"
+      responses:
+        "200":
+          description: Recommended outfits
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OutfitRecommendationResponse"
+        "400":
+          description: Validation failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: No eligible garments with completed metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        default:
+          $ref: "#/components/responses/Error"
+
+components:
+  parameters:
+    userId:
+      name: userId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    batchId:
+      name: batchId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    itemId:
+      name: itemId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    Error:
+      description: Structured API error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+  schemas:
+    CreateUserRequest:
+      type: object
+      required: [firstName, lastName, email]
+      properties:
+        firstName:
+          type: string
+          minLength: 1
+        lastName:
+          type: string
+          minLength: 1
+        email:
+          type: string
+          format: email
+
+    UserResponse:
+      type: object
+      required: [id, firstName, lastName, email, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        firstName:
+          type: string
+        lastName:
+          type: string
+        email:
+          type: string
+          format: email
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    CreateUploadBatchRequest:
+      type: object
+      required: [userId, photoCount, contentType]
+      properties:
+        userId:
+          type: string
+          format: uuid
+        photoCount:
+          type: integer
+          minimum: 1
+          maximum: 30
+        contentType:
+          type: string
+          minLength: 1
+          description: MIME type used for each signed PUT (e.g. `image/jpeg`)
+          example: image/jpeg
+
+    UploadUrlResponse:
+      type: object
+      required: [itemId, objectKey, uploadUrl, expiresAt]
+      properties:
+        itemId:
+          type: string
+          format: uuid
+        objectKey:
+          type: string
+          description: GCS object key for the uploaded photo
+        uploadUrl:
+          type: string
+          format: uri
+          description: Signed GCS URL — client should `PUT` the image bytes here
+        expiresAt:
+          type: string
+          format: date-time
+
+    UploadBatchResponse:
+      type: object
+      required: [batchId, status, uploads]
+      properties:
+        batchId:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/UploadStatus"
+        uploads:
+          type: array
+          items:
+            $ref: "#/components/schemas/UploadUrlResponse"
+
+    UploadItemStatusResponse:
+      type: object
+      required: [itemId, objectKey, status]
+      properties:
+        itemId:
+          type: string
+          format: uuid
+        objectKey:
+          type: string
+        status:
+          $ref: "#/components/schemas/UploadStatus"
+
+    UploadBatchStatusResponse:
+      type: object
+      required: [batchId, status, items]
+      properties:
+        batchId:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/UploadStatus"
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/UploadItemStatusResponse"
+
+    GarmentExtractionResponse:
+      type: object
+      required: [itemId, status]
+      properties:
+        itemId:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/GarmentExtractionStatus"
+        lastAttemptedAt:
+          type: string
+          format: date-time
+          nullable: true
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+        lastErrorMessage:
+          type: string
+          nullable: true
+        aiModel:
+          type: string
+          nullable: true
+          description: Model identifier used for detection/metadata extraction
+
+    GarmentMetadataResponse:
+      type: object
+      description: Fashion metadata for a garment. Enum fields are serialized as their string names.
+      properties:
+        category:
+          $ref: "#/components/schemas/GarmentCategory"
+        subcategory:
+          type: string
+          nullable: true
+        primaryColour:
+          type: string
+        secondaryColours:
+          type: array
+          items:
+            type: string
+        pattern:
+          $ref: "#/components/schemas/GarmentPattern"
+        seasons:
+          type: array
+          items:
+            $ref: "#/components/schemas/Season"
+        occasions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Occasion"
+        fit:
+          $ref: "#/components/schemas/Fit"
+        silhouette:
+          $ref: "#/components/schemas/Silhouette"
+        material:
+          $ref: "#/components/schemas/Material"
+        sleeveLength:
+          $ref: "#/components/schemas/SleeveLength"
+        neckline:
+          $ref: "#/components/schemas/Neckline"
+        length:
+          $ref: "#/components/schemas/GarmentLength"
+        warmth:
+          $ref: "#/components/schemas/Warmth"
+        formality:
+          type: integer
+          minimum: 1
+          maximum: 5
+          description: Formality score assigned by the analyzer
+        styleTags:
+          type: array
+          items:
+            type: string
+
+    GarmentResponse:
+      type: object
+      properties:
+        garmentId:
+          type: string
+          format: uuid
+        label:
+          type: string
+          example: blue denim jacket
+        box2d:
+          type: array
+          minItems: 4
+          maxItems: 4
+          items:
+            type: integer
+          description: Bounding box `[yMin, xMin, yMax, xMax]` normalized 0–1000
+        imageUrl:
+          type: string
+          format: uri
+          description: Signed read URL for the cropped garment image
+        imageUrlExpiresAt:
+          type: string
+          format: date-time
+        cleanImageUrl:
+          type: string
+          format: uri
+          nullable: true
+          description: Signed read URL for the clean product-style cutout (may be null)
+        cleanImageUrlExpiresAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        metadata:
+          allOf:
+            - $ref: "#/components/schemas/GarmentMetadataResponse"
+          nullable: true
+
+    GarmentSummaryResponse:
+      type: object
+      required: [garmentId, label, imageUrl, imageUrlExpiresAt]
+      properties:
+        garmentId:
+          type: string
+          format: uuid
+        label:
+          type: string
+        imageUrl:
+          type: string
+          format: uri
+        imageUrlExpiresAt:
+          type: string
+          format: date-time
+
+    OutfitRecommendationRequest:
+      type: object
+      required: [context]
+      properties:
+        context:
+          type: string
+          minLength: 1
+          description: Free-text occasion / context for recommendations
+          example: casual Friday brunch
+
+    RecommendedOutfitResponse:
+      type: object
+      properties:
+        title:
+          type: string
+        rationale:
+          type: string
+        garments:
+          type: array
+          items:
+            $ref: "#/components/schemas/GarmentSummaryResponse"
+
+    OutfitRecommendationResponse:
+      type: object
+      required: [context, outfits]
+      properties:
+        context:
+          type: string
+        outfits:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecommendedOutfitResponse"
+
+    ErrorResponse:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          $ref: "#/components/schemas/ErrorCode"
+        message:
+          type: string
+
+    # --- Enums (serialized as string names) ---
+
+    UploadStatus:
+      type: string
+      enum: [PENDING, UPLOADED, COMPLETED, EXPIRED]
+
+    GarmentExtractionStatus:
+      type: string
+      enum: [PENDING, COMPLETED, FAILED]
+
+    GarmentCategory:
+      type: string
+      enum:
+        - T_SHIRT
+        - SHIRT
+        - BLOUSE
+        - SWEATER
+        - HOODIE
+        - BLAZER
+        - JACKET
+        - COAT
+        - DRESS
+        - SKIRT
+        - JEANS
+        - TROUSERS
+        - SHORTS
+        - LEGGINGS
+        - JUMPSUIT
+        - SUIT
+        - SHOES
+        - BOOTS
+        - SANDALS
+        - BAG
+        - HAT
+        - BELT
+        - SCARF
+        - JEWELRY
+        - SUNGLASSES
+        - OTHER
+        - NOT_APPLICABLE
+
+    GarmentPattern:
+      type: string
+      enum:
+        - SOLID
+        - STRIPED
+        - PLAID
+        - FLORAL
+        - POLKA_DOT
+        - CHECKERED
+        - CAMOUFLAGE
+        - ANIMAL_PRINT
+        - GRAPHIC_PRINT
+        - COLOR_BLOCK
+        - TEXTURED
+        - OTHER
+        - NOT_APPLICABLE
+
+    Season:
+      type: string
+      enum: [SPRING, SUMMER, FALL, WINTER, NOT_APPLICABLE]
+
+    Occasion:
+      type: string
+      enum: [CASUAL, WORK, FORMAL, PARTY, ATHLETIC, LOUNGE, OUTDOOR, OTHER, NOT_APPLICABLE]
+
+    Fit:
+      type: string
+      enum: [SLIM, REGULAR, RELAXED, OVERSIZED, TAILORED, OTHER, NOT_APPLICABLE]
+
+    Silhouette:
+      type: string
+      enum: [A_LINE, BOXY, STRAIGHT, BODYCON, FLARED, WRAP, PENCIL, OTHER, NOT_APPLICABLE]
+
+    Material:
+      type: string
+      enum:
+        - COTTON
+        - DENIM
+        - WOOL
+        - POLYESTER
+        - LEATHER
+        - SILK
+        - LINEN
+        - CASHMERE
+        - NYLON
+        - SUEDE
+        - VELVET
+        - KNIT
+        - BLEND
+        - OTHER
+        - NOT_APPLICABLE
+
+    SleeveLength:
+      type: string
+      enum: [SLEEVELESS, SHORT, THREE_QUARTER, LONG, OTHER, NOT_APPLICABLE]
+
+    Neckline:
+      type: string
+      enum: [CREW, V_NECK, SCOOP, TURTLENECK, COLLARED, HALTER, OFF_SHOULDER, OTHER, NOT_APPLICABLE]
+
+    GarmentLength:
+      type: string
+      enum: [CROPPED, REGULAR, LONGLINE, MINI, MIDI, MAXI, OTHER, NOT_APPLICABLE]
+
+    Warmth:
+      type: string
+      enum: [LIGHT, MEDIUM, HEAVY, OTHER, NOT_APPLICABLE]
+
+    ErrorCode:
+      type: string
+      description: Machine-readable error code from the API
+      enum:
+        - EMAIL_ALREADY_EXISTS
+        - USER_NOT_FOUND
+        - UPLOAD_BATCH_NOT_FOUND
+        - UPLOAD_ITEM_NOT_FOUND
+        - GARMENT_EXTRACTION_NOT_FOUND
+        - NO_ELIGIBLE_GARMENTS
+        - UNSUPPORTED_IMAGE_FORMAT
+        - GEMINI_RESPONSE_PARSE_ERROR
+        - GEMINI_IMAGE_GENERATION_ERROR
+        - QWEN_RESPONSE_PARSE_ERROR
+        - VALIDATION_FAILED
+        - INTERNAL_ERROR
