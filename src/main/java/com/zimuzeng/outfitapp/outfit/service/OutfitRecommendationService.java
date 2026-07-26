@@ -62,13 +62,25 @@ public class OutfitRecommendationService {
 
         RetrievalCriteria criteria = criteriaExtractor.extract(request.context());
         List<GarmentMetadata> filtered = wardrobeCandidateFilter.filter(candidates, criteria);
+        List<GarmentMetadata> withDescriptions = filtered.stream()
+                .filter(gm -> gm.getDescription() != null && !gm.getDescription().isBlank())
+                .toList();
         log.info(
                 "Outfit recommendation for user {}: {} wardrobe garment(s) narrowed to {} candidate(s) "
-                        + "(interpretation=\"{}\", lang={})",
-                userId, candidates.size(), filtered.size(), criteria.interpretation(), lang);
+                        + "({} with descriptions; interpretation=\"{}\", lang={})",
+                userId,
+                candidates.size(),
+                filtered.size(),
+                withDescriptions.size(),
+                criteria.interpretation(),
+                lang);
+
+        if (withDescriptions.isEmpty()) {
+            return new OutfitRecommendationResponse(request.context(), List.of(), false);
+        }
 
         List<RecommendedOutfit> fetched = outfitRecommender.recommend(
-                request.context(), filtered, request.excludeOutfits(), preferChinese);
+                request.context(), withDescriptions, request.excludeOutfits(), preferChinese);
 
         // Page-size+1: a surplus outfit means more good looks existed than we return.
         boolean hasMore = fetched.size() > MAX_OUTFITS_PER_BATCH;
@@ -77,7 +89,7 @@ public class OutfitRecommendationService {
                 : fetched;
 
         Map<UUID, GarmentMetadata> byGarmentId =
-                filtered.stream().collect(Collectors.toMap(gm -> gm.getGarment().getId(), gm -> gm));
+                withDescriptions.stream().collect(Collectors.toMap(gm -> gm.getGarment().getId(), gm -> gm));
 
         List<RecommendedOutfitResponse> outfitResponses =
                 outfits.stream().map(outfit -> toResponse(outfit, byGarmentId, preferChinese)).toList();

@@ -14,18 +14,10 @@ import org.springframework.stereotype.Component;
 public class WardrobeCandidateFilter {
 
     /**
-     * If the retrieval filter narrows the wardrobe below this many garments, fall back to the
-     * full candidate pool instead — small wardrobes (or oddly-specific requests) shouldn't end
-     * up with too little for the recommender to compose from.
-     *
-     * <p>Used by outfit recommendation only. Buy-advice uses {@link #filterStrict} with its own
-     * complementary-group fallback policy.
+     * Applies {@link RetrievalCriteria} with no size-based fallback to the full wardrobe.
      */
-    public static final int MIN_CANDIDATES_AFTER_FILTER = 6;
-
     public List<GarmentMetadata> filter(List<GarmentMetadata> candidates, RetrievalCriteria criteria) {
-        List<GarmentMetadata> filtered = filterStrict(candidates, criteria);
-        return filtered.size() >= MIN_CANDIDATES_AFTER_FILTER ? filtered : candidates;
+        return filterStrict(candidates, criteria);
     }
 
     /**

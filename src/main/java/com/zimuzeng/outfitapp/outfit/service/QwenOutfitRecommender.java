@@ -26,9 +26,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 /**
- * Composes outfits from a candidate pool using structured garment metadata and natural-language
- * descriptions as JSON text (no images). Requests up to {@link #FETCH_LIMIT} so the caller can
- * apply page-size+1 pagination ({@code hasMore} when a surplus outfit exists).
+ * Composes outfits from a candidate pool using natural-language garment descriptions as JSON
+ * text (no images, no structured metadata). Structured filtering happens upstream. Requests up
+ * to {@link #FETCH_LIMIT} so the caller can apply page-size+1 pagination ({@code hasMore} when a
+ * surplus outfit exists).
  *
  * <p>Qwen's {@code json_object} mode requires a JSON object root, so the response is wrapped as
  * {@code {"outfits":[...]}} rather than a bare array.
@@ -47,27 +48,31 @@ public class QwenOutfitRecommender implements OutfitRecommender {
     private static final String SYSTEM_INSTRUCTION = """
             You help people pick outfits from their wardrobe. You will be given a free-text
             description of what the user is dressing for, and a JSON array of candidate garments
-            from their wardrobe, each with a unique "id", structured attributes, and a
-            natural-language "description".
+            from their wardrobe. Each candidate has only a unique "id" and a natural-language
+            "description". Structured metadata was already used to filter this pool — do not
+            assume or invent attributes that are not stated in a description.
 
-            Use structured fields (category, formality, season, occasion, warmth, etc.) for hard
-            constraints and compatibility. Prefer each garment's "description" for visual and
-            style nuance when choosing pieces and writing rationales.
+            Use ONLY the user's request and each garment's "description" to judge fit,
+            compatibility, occasion, weather, and style. Compose complete, wearable outfits
+            using ONLY the garments provided - never invent an id or describe a garment that
+            isn't in the candidate list. Each outfit should make sense worn together. Layering
+            is fine and encouraged when it fits the weather or look (e.g. tee under sweater
+            under jacket). Avoid nonsensical duplicates like two pairs of shoes, or two jackets
+            that aren't intentional layering. Each outfit must use a unique garmentIds
+            combination — do not repeat the exact same pieces with a different title or
+            rationale. Prefer meaningfully different looks (different hero pieces, silhouettes,
+            or styling directions) when the wardrobe supports them.
 
-            Compose 1 to 6 complete, wearable outfits using ONLY the garments provided - never
-            invent an id or describe a garment that isn't in the candidate list. Each outfit
-            should make sense worn together. Layering is fine and encouraged when it fits the
-            weather or look (e.g. tee under sweater under jacket). Avoid nonsensical duplicates
-            like two pairs of shoes, or two jackets that aren't intentional layering. Each outfit
-            must use a unique garmentIds combination — do not repeat the exact same pieces with a
-            different title or rationale. Prefer meaningfully different looks (different hero
-            pieces, silhouettes, or styling directions) when the wardrobe supports them. Outfits
-            should also suit the described occasion, implied weather/season, and formality. For
-            each outfit, give a title and a brief rationale explaining why it works.
+            Quality bar (strict): only recommend an outfit if it genuinely suits the user's
+            request. If the candidates cannot support a sensible outfit for that request,
+            return an empty "outfits" array. Never pad with weak, forced, or off-request
+            looks. Prefer returning a 6th good outfit when one exists so the client can tell
+            that more looks are available; otherwise return fewer (including zero).
 
-            Put garment ids ONLY in the "garmentIds" array. Never mention ids, UUIDs, or
-            phrases like "(id: ...)" in "title" or "rationale" - refer to garments by colour,
-            category, and style attributes instead (e.g. "the black knit dress").
+            For each outfit you do return, give a title and a brief rationale explaining why it
+            works for the request. Put garment ids ONLY in the "garmentIds" array. Never
+            mention ids, UUIDs, or phrases like "(id: ...)" in "title" or "rationale" - refer
+            to garments using wording from their descriptions (e.g. colour and garment type).
 
             User-facing copy rules for every outfit title and rationale (strict — these strings
             are shown to end users as-is):
@@ -78,11 +83,6 @@ public class QwenOutfitRecommender implements OutfitRecommender {
             """
             + UserFacingCopyStyle.OUTFIT_COPY_INSTRUCTION
             + """
-
-            If the candidates genuinely cannot support a good outfit for the request, return
-            fewer outfits rather than forcing a bad one - but only as a last resort. Never pad
-            the list with weak or forced outfits just to reach 6. Prefer returning a 6th good
-            outfit when one exists so the client can tell that more looks are available.
 
             When previously shown outfits are provided, do not repeat those exact garment
             combinations. Prefer meaningfully different looks (different hero pieces, silhouettes,
@@ -246,47 +246,11 @@ public class QwenOutfitRecommender implements OutfitRecommender {
         return List.copyOf(unique);
     }
 
-    private record CandidateGarmentView(
-            String id,
-            String garmentGroup,
-            String category,
-            String primaryColour,
-            List<String> secondaryColours,
-            String pattern,
-            List<String> seasons,
-            List<String> occasions,
-            String fit,
-            String silhouette,
-            String material,
-            String sleeveLength,
-            String neckline,
-            String length,
-            String layerRole,
-            String warmth,
-            int formality,
-            List<String> styleTags,
-            String description) {
+    private record CandidateGarmentView(String id, String description) {
 
         static CandidateGarmentView fromEntity(GarmentMetadata metadata) {
             return new CandidateGarmentView(
                     metadata.getGarment().getId().toString(),
-                    metadata.getGarmentGroup().name(),
-                    metadata.getCategory().name(),
-                    metadata.getPrimaryColour().name(),
-                    metadata.getSecondaryColours().stream().map(Enum::name).toList(),
-                    metadata.getPattern().name(),
-                    metadata.getSeasons().stream().map(Enum::name).toList(),
-                    metadata.getOccasions().stream().map(Enum::name).toList(),
-                    metadata.getFit().name(),
-                    metadata.getSilhouette().name(),
-                    metadata.getMaterial().name(),
-                    metadata.getSleeveLength().name(),
-                    metadata.getNeckline().name(),
-                    metadata.getLength().name(),
-                    metadata.getLayerRole().name(),
-                    metadata.getWarmth().name(),
-                    metadata.getFormality(),
-                    metadata.getStyleTags().stream().map(Enum::name).toList(),
                     metadata.getDescription());
         }
     }
