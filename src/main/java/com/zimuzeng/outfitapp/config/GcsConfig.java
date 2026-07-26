@@ -1,17 +1,23 @@
 package com.zimuzeng.outfitapp.config;
 
+import com.google.auth.oauth2.GoogleCredentials;
+import com.google.auth.oauth2.ServiceAccountCredentials;
 import com.google.cloud.storage.Storage;
 import com.google.cloud.storage.StorageOptions;
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.util.StringUtils;
 
 /**
  * Wires up the Google Cloud Storage client used to sign wardrobe photo upload URLs.
  *
- * <p>Credentials are resolved via Application Default Credentials (the
- * {@code GOOGLE_APPLICATION_CREDENTIALS} env var pointing at a service account key), which must
- * be authorized to sign URLs and to subscribe to the Pub/Sub subscription configured under
+ * <p>Credentials come from {@code GCS_SERVICE_ACCOUNT_JSON}, which must contain the full service
+ * account key JSON (not a file path). The same credentials are used for Pub/Sub under
  * {@code gcs.pubsub}.
  *
  * <p>One-time infra setup (outside the app), so GCS publishes a Pub/Sub message whenever a
@@ -24,7 +30,7 @@ import org.springframework.context.annotation.Configuration;
  * }</pre>
  *
  * <p>Dead-letter setup, so a notification that keeps failing (see
- * {@link com.zimuzeng.outfitapp.upload.UploadNotificationListener}) is routed to a DLQ topic
+ * {@link com.zimuzeng.outfitapp.upload.service.UploadNotificationListener}) is routed to a DLQ topic
  * after 5 delivery attempts (5 is the minimum Pub/Sub allows) instead of being redelivered
  * forever. Messages landing here should be inspected/replayed manually:
  *
@@ -49,7 +55,22 @@ import org.springframework.context.annotation.Configuration;
 public class GcsConfig {
 
     @Bean
-    public Storage storage() {
-        return StorageOptions.getDefaultInstance().getService();
+    public GoogleCredentials googleCredentials(GcsProperties gcsProperties) {
+        String json = gcsProperties.serviceAccountJson();
+        if (!StringUtils.hasText(json)) {
+            throw new IllegalStateException(
+                    "GCS_SERVICE_ACCOUNT_JSON is required and must contain the service account key JSON");
+        }
+        try {
+            return ServiceAccountCredentials.fromStream(
+                    new ByteArrayInputStream(json.getBytes(StandardCharsets.UTF_8)));
+        } catch (IOException ex) {
+            throw new UncheckedIOException("Failed to parse GCS_SERVICE_ACCOUNT_JSON", ex);
+        }
+    }
+
+    @Bean
+    public Storage storage(GoogleCredentials googleCredentials) {
+        return StorageOptions.newBuilder().setCredentials(googleCredentials).build().getService();
     }
 }

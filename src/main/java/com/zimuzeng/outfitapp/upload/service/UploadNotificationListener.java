@@ -1,5 +1,7 @@
 package com.zimuzeng.outfitapp.upload.service;
 
+import com.google.api.gax.core.FixedCredentialsProvider;
+import com.google.auth.oauth2.GoogleCredentials;
 import com.google.cloud.pubsub.v1.AckReplyConsumer;
 import com.google.cloud.pubsub.v1.Subscriber;
 import com.google.pubsub.v1.ProjectSubscriptionName;
@@ -52,6 +54,7 @@ public class UploadNotificationListener {
     private final BuyAdviceService buyAdviceService;
     private final BuyAdviceProcessingService buyAdviceProcessingService;
     private final GcsProperties gcsProperties;
+    private final GoogleCredentials googleCredentials;
 
     private Subscriber subscriber;
 
@@ -60,7 +63,9 @@ public class UploadNotificationListener {
         ProjectSubscriptionName subscriptionName = ProjectSubscriptionName.of(
                 gcsProperties.pubsub().projectId(), gcsProperties.pubsub().subscriptionId());
 
-        subscriber = Subscriber.newBuilder(subscriptionName, this::handleMessage).build();
+        subscriber = Subscriber.newBuilder(subscriptionName, this::handleMessage)
+                .setCredentialsProvider(FixedCredentialsProvider.create(googleCredentials))
+                .build();
         subscriber.startAsync().awaitRunning();
         log.info("Listening for GCS upload notifications on subscription {}", subscriptionName);
     }

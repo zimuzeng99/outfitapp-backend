@@ -13,6 +13,8 @@ spring:
 gcs:
   bucket: outfitapp-wardrobe-photos
   signed-url-expiry-minutes: 15
+  # Full service account key JSON (not a file path)
+  service-account-json: ${GCS_SERVICE_ACCOUNT_JSON}
   pubsub:
     # Project number (distinct from the project ID below) for outfit-app-503420: 578384980634
     # Reference only, not read by the app - needed for the Pub/Sub service agent identity
