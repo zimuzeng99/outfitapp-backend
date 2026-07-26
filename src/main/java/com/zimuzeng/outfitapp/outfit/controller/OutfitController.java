@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -22,7 +23,9 @@ public class OutfitController {
 
     @PostMapping
     public ResponseEntity<OutfitRecommendationResponse> recommend(
-            @PathVariable UUID userId, @Valid @RequestBody OutfitRecommendationRequest request) {
-        return ResponseEntity.ok(outfitRecommendationService.recommend(userId, request));
+            @PathVariable UUID userId,
+            @RequestParam(required = false, defaultValue = "en") String lang,
+            @Valid @RequestBody OutfitRecommendationRequest request) {
+        return ResponseEntity.ok(outfitRecommendationService.recommend(userId, request, lang));
     }
 }

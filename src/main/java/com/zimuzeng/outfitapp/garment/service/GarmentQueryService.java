@@ -3,9 +3,11 @@ package com.zimuzeng.outfitapp.garment.service;
 import com.zimuzeng.outfitapp.common.exception.AppException;
 import com.zimuzeng.outfitapp.common.exception.ErrorCode;
 import com.zimuzeng.outfitapp.common.storage.GcsSignedUrlService;
+import com.zimuzeng.outfitapp.garment.GarmentLabelLocale;
 import com.zimuzeng.outfitapp.garment.dto.GarmentExtractionResponse;
 import com.zimuzeng.outfitapp.garment.dto.GarmentResponse;
 import com.zimuzeng.outfitapp.garment.dto.GarmentSummaryResponse;
+import com.zimuzeng.outfitapp.garment.dto.WardrobeFilter;
 import com.zimuzeng.outfitapp.garment.model.GarmentExtraction;
 import com.zimuzeng.outfitapp.garment.repository.GarmentExtractionRepository;
 import com.zimuzeng.outfitapp.garment.repository.GarmentMetadataRepository;
@@ -42,37 +44,44 @@ public class GarmentQueryService {
         return GarmentExtractionResponse.fromEntity(item, extraction);
     }
 
-    public List<GarmentResponse> getGarments(UUID itemId) {
+    public List<GarmentResponse> getGarments(UUID itemId, String lang) {
+        boolean preferChinese = GarmentLabelLocale.preferChinese(lang);
         UploadItem item = findItem(itemId);
         return garmentRepository.findByUploadItem(item).stream()
                 .map(garment -> GarmentResponse.fromEntity(
                         garment,
+                        GarmentLabelLocale.displayLabel(garment, preferChinese),
                         gcsSignedUrlService.generateReadUrl(garment.getObjectKey()),
-                        garment.getCleanObjectKey() == null
-                                ? null
-                                : gcsSignedUrlService.generateReadUrl(garment.getCleanObjectKey()),
                         garmentMetadataRepository.findByGarment(garment).orElse(null)))
                 .toList();
     }
 
     /**
-     * Every garment across a user's whole wardrobe, as lightweight summaries for a mobile
-     * wardrobe grid. Includes garments whose metadata extraction hasn't completed (or failed)
-     * yet - this is a browsing view, not the filtered candidate pool used by outfit
-     * recommendation.
+     * Garments across a user's wardrobe as lightweight summaries. With no filter, includes items
+     * whose metadata extraction hasn't completed yet. With an active {@link WardrobeFilter}, only
+     * garments that have completed metadata and match the closed-enum criteria are returned.
      */
-    public List<GarmentSummaryResponse> getGarmentsForUser(UUID userId) {
+    public List<GarmentSummaryResponse> getGarmentsForUser(UUID userId, String lang, WardrobeFilter filter) {
         if (!userRepository.existsById(userId)) {
             throw new AppException(ErrorCode.USER_NOT_FOUND, userId);
         }
 
+        boolean preferChinese = GarmentLabelLocale.preferChinese(lang);
+        if (filter != null && filter.isActive()) {
+            return garmentMetadataRepository.findByUserId(userId).stream()
+                    .filter(filter::matches)
+                    .map(metadata -> GarmentSummaryResponse.fromEntity(
+                            metadata.getGarment(),
+                            GarmentLabelLocale.displayLabel(metadata.getGarment(), preferChinese),
+                            gcsSignedUrlService.generateReadUrl(metadata.getGarment().getObjectKey())))
+                    .toList();
+        }
+
         return garmentRepository.findByUserId(userId).stream()
-                .map(garment -> {
-                    String displayKey = garment.getCleanObjectKey() != null
-                            ? garment.getCleanObjectKey()
-                            : garment.getObjectKey();
-                    return GarmentSummaryResponse.fromEntity(garment, gcsSignedUrlService.generateReadUrl(displayKey));
-                })
+                .map(garment -> GarmentSummaryResponse.fromEntity(
+                        garment,
+                        GarmentLabelLocale.displayLabel(garment, preferChinese),
+                        gcsSignedUrlService.generateReadUrl(garment.getObjectKey())))
                 .toList();
     }
 

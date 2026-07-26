@@ -1,10 +1,12 @@
 package com.zimuzeng.outfitapp.user.dto;
 
 import jakarta.validation.constraints.Email;
-import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import java.util.UUID;
 
 public record CreateUserRequest(
-        @NotBlank String firstName,
-        @NotBlank String lastName,
-        @NotBlank @Email String email) {
+        @NotNull UUID id,
+        String firstName,
+        String lastName,
+        @Email String email) {
 }

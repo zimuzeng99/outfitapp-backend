@@ -3,6 +3,7 @@ package com.zimuzeng.outfitapp.user.service;
 import com.zimuzeng.outfitapp.common.exception.AppException;
 import com.zimuzeng.outfitapp.common.exception.ErrorCode;
 import com.zimuzeng.outfitapp.user.dto.CreateUserRequest;
+import com.zimuzeng.outfitapp.user.dto.CreateUserResult;
 import com.zimuzeng.outfitapp.user.dto.UserResponse;
 import com.zimuzeng.outfitapp.user.model.User;
 import com.zimuzeng.outfitapp.user.repository.UserRepository;
@@ -25,18 +26,25 @@ public class UserService {
     }
 
     @Transactional
-    public UserResponse createUser(CreateUserRequest request) {
-        if (userRepository.existsByEmail(request.email())) {
+    public CreateUserResult createUser(CreateUserRequest request) {
+        return userRepository.findById(request.id())
+                .map(existing -> new CreateUserResult(UserResponse.fromEntity(existing), false))
+                .orElseGet(() -> createNewUser(request));
+    }
+
+    private CreateUserResult createNewUser(CreateUserRequest request) {
+        if (request.email() != null && userRepository.existsByEmail(request.email())) {
             throw new AppException(ErrorCode.EMAIL_ALREADY_EXISTS, request.email());
         }
 
         User user = User.builder()
+                .id(request.id())
                 .firstName(request.firstName())
                 .lastName(request.lastName())
                 .email(request.email())
                 .build();
 
         User saved = userRepository.save(user);
-        return UserResponse.fromEntity(saved);
+        return new CreateUserResult(UserResponse.fromEntity(saved), true);
     }
 }

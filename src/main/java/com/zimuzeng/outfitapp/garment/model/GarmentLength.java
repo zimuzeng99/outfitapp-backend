@@ -1,9 +1,13 @@
 package com.zimuzeng.outfitapp.garment.model;
 
 /**
- * Overall garment length (e.g. cropped top vs. regular vs. a maxi dress). {@code NOT_APPLICABLE}
- * covers items where "length" isn't a meaningful attribute (e.g. shoes, bags, hats). {@code OTHER}
- * covers a length that is present but doesn't match any of the named options.
+ * Length semantics depend on {@link GarmentGroup}:
+ * <ul>
+ *   <li>tops/outerwear: {@code CROPPED}, {@code REGULAR}, {@code LONGLINE}</li>
+ *   <li>skirts/dresses: {@code MINI}, {@code MIDI}, {@code MAXI}</li>
+ *   <li>bottoms (trousers/jeans/leggings): {@code SHORT}, {@code REGULAR}, {@code LONG}</li>
+ *   <li>else: {@code NOT_APPLICABLE}</li>
+ * </ul>
  */
 public enum GarmentLength {
     CROPPED,
@@ -12,6 +16,8 @@ public enum GarmentLength {
     MINI,
     MIDI,
     MAXI,
+    SHORT,
+    LONG,
     OTHER,
     NOT_APPLICABLE
 }

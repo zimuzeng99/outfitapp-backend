@@ -3,14 +3,14 @@ package com.zimuzeng.outfitapp.garment.model;
 import java.util.List;
 
 /**
- * Structured fashion metadata Gemini extracted for a single garment crop, already validated
- * against the actual Java enums (see {@code GeminiGarmentMetadataAnalyzer}).
+ * Structured fashion metadata extracted for a single garment crop, already validated against the
+ * actual Java enums (see {@code QwenGarmentMetadataAnalyzer}).
  */
 public record ExtractedGarmentMetadata(
+        GarmentGroup garmentGroup,
         GarmentCategory category,
-        String subcategory,
-        String primaryColour,
-        List<String> secondaryColours,
+        Colour primaryColour,
+        List<Colour> secondaryColours,
         GarmentPattern pattern,
         List<Season> seasons,
         List<Occasion> occasions,
@@ -20,7 +20,9 @@ public record ExtractedGarmentMetadata(
         SleeveLength sleeveLength,
         Neckline neckline,
         GarmentLength length,
+        LayerRole layerRole,
         Warmth warmth,
         int formality,
-        List<String> styleTags) {
+        List<StyleTag> styleTags,
+        String description) {
 }

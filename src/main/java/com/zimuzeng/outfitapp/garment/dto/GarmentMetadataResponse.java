@@ -4,8 +4,8 @@ import com.zimuzeng.outfitapp.garment.model.GarmentMetadata;
 import java.util.List;
 
 public record GarmentMetadataResponse(
+        String garmentGroup,
         String category,
-        String subcategory,
         String primaryColour,
         List<String> secondaryColours,
         String pattern,
@@ -17,16 +17,18 @@ public record GarmentMetadataResponse(
         String sleeveLength,
         String neckline,
         String length,
+        String layerRole,
         String warmth,
         int formality,
-        List<String> styleTags) {
+        List<String> styleTags,
+        String description) {
 
     public static GarmentMetadataResponse fromEntity(GarmentMetadata metadata) {
         return new GarmentMetadataResponse(
+                metadata.getGarmentGroup().name(),
                 metadata.getCategory().name(),
-                metadata.getSubcategory(),
-                metadata.getPrimaryColour(),
-                metadata.getSecondaryColours(),
+                metadata.getPrimaryColour().name(),
+                metadata.getSecondaryColours().stream().map(Enum::name).toList(),
                 metadata.getPattern().name(),
                 metadata.getSeasons().stream().map(Enum::name).toList(),
                 metadata.getOccasions().stream().map(Enum::name).toList(),
@@ -36,8 +38,10 @@ public record GarmentMetadataResponse(
                 metadata.getSleeveLength().name(),
                 metadata.getNeckline().name(),
                 metadata.getLength().name(),
+                metadata.getLayerRole().name(),
                 metadata.getWarmth().name(),
                 metadata.getFormality(),
-                metadata.getStyleTags());
+                metadata.getStyleTags().stream().map(Enum::name).toList(),
+                metadata.getDescription());
     }
 }

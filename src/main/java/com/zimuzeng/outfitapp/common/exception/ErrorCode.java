@@ -14,12 +14,13 @@ public enum ErrorCode {
     UPLOAD_BATCH_NOT_FOUND(HttpStatus.NOT_FOUND, "Upload batch with id '%s' not found"),
     UPLOAD_ITEM_NOT_FOUND(HttpStatus.NOT_FOUND, "Upload item with id '%s' not found"),
     GARMENT_EXTRACTION_NOT_FOUND(HttpStatus.NOT_FOUND, "Garment extraction for upload item '%s' not found"),
+    GARMENT_NOT_FOUND(HttpStatus.NOT_FOUND, "Garment with id '%s' not found"),
     NO_ELIGIBLE_GARMENTS(HttpStatus.UNPROCESSABLE_ENTITY,
             "No garments with completed metadata found for user '%s' - upload and process some garments first"),
+    BUY_ADVICE_NOT_FOUND(HttpStatus.NOT_FOUND, "Buy advice with id '%s' not found"),
     UNSUPPORTED_IMAGE_FORMAT(HttpStatus.BAD_REQUEST, "Cannot decode image of content type '%s': unsupported by ImageIO"),
-    GEMINI_RESPONSE_PARSE_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to parse Gemini response: %s"),
-    GEMINI_IMAGE_GENERATION_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "Gemini did not return an image: %s"),
     QWEN_RESPONSE_PARSE_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to parse Qwen response: %s"),
+    UNSUPPORTED_LANG(HttpStatus.BAD_REQUEST, "Unsupported lang '%s'; supported values are 'en' and 'zh'"),
     VALIDATION_FAILED(HttpStatus.BAD_REQUEST, "Validation failed: %s"),
     INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "An unexpected error occurred");
 

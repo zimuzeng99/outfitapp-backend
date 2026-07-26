@@ -20,24 +20,26 @@ import java.util.Base64;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 /**
- * Qwen counterpart to {@link GeminiGarmentDetector}: sends a wardrobe photo to Qwen (via
- * DashScope's OpenAI-compatible API - see {@link com.zimuzeng.outfitapp.config.QwenConfig}) and
- * asks it to identify every garment (including shoes) clearly visible enough to produce a good
- * crop. Accessories are ignored.
+ * Sends a photo to Qwen (via DashScope's OpenAI-compatible API - see
+ * {@link com.zimuzeng.outfitapp.config.QwenConfig}) and asks it to identify garments with
+ * full-extent bounding boxes that include soft occlusion (e.g. hair or hands). Accessories are
+ * ignored. Items that are mostly hidden by hard occlusion, cut off by the frame edge, or
+ * otherwise too unclear to identify are deliberately omitted.
  *
- * <p>Unlike Gemini's {@code responseSchema}, Qwen's JSON mode ({@code response_format:
- * json_object}) only guarantees syntactically valid JSON, not conformance to a particular shape -
- * so the exact field names, types, and the {@code box2d} convention are spelled out in the
- * system instruction instead of a typed schema. Qwen's JSON mode also requires the top-level
- * response to be a JSON object rather than a bare array, so the list of garments is wrapped
- * under a {@code "garments"} key.
+ * <p>{@link DetectionMode#MULTI} (wardrobe) asks for every distinct garment;
+ * {@link DetectionMode#SINGLE_PRIMARY} (buy advice) asks for at most one purchase candidate.
  *
- * <p>Active when {@code garment.analysis-provider} is {@code qwen} - see
- * {@link GeminiGarmentDetector} for the default implementation of {@link GarmentDetector}.
+ * <p>Qwen's JSON mode ({@code response_format: json_object}) only guarantees syntactically valid
+ * JSON, not conformance to a particular shape - so the exact field names, types, and the
+ * {@code box2d} convention are spelled out in the system instruction instead of a typed schema.
+ * Qwen3-VL is trained on {@code [xMin, yMin, xMax, yMax]} (0–1000); that order is requested from
+ * the model and then converted to the app-wide convention {@code [yMin, xMin, yMax, xMax]} before
+ * returning {@link DetectedGarment}s. Qwen's JSON mode also requires the top-level response to be
+ * a JSON object rather than a bare array, so the list of garments is wrapped under a
+ * {@code "garments"} key.
  *
  * <p>Because conformance to that shape isn't guaranteed, responses are handled defensively:
  * unknown fields and a few alternate top-level key names are tolerated (see {@link
@@ -47,7 +49,6 @@ import org.springframework.stereotype.Component;
  * before giving up.
  */
 @Component
-@ConditionalOnProperty(name = "garment.analysis-provider", havingValue = "qwen")
 @RequiredArgsConstructor
 @Slf4j
 public class QwenGarmentDetector implements GarmentDetector {
@@ -55,35 +56,87 @@ public class QwenGarmentDetector implements GarmentDetector {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper()
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
-    private static final String SYSTEM_INSTRUCTION = """
+    private static final String RESPONSE_SHAPE = """
+            Respond with ONLY a JSON object of this exact shape, and nothing else:
+            {"garments": [{"label": "<short English label>", "labelZh": "<matching Chinese label>", "box2d": [xMin, yMin, xMax, yMax]}]}
+            The top-level key MUST be named exactly "garments" - not "accessories", "items",
+            "detections", or any other name. Each box2d is an array of exactly 4 integers
+            normalized to a 0-1000 scale, in [xMin, yMin, xMax, yMax] order (left, top, right,
+            bottom edges of the box) - Qwen's native grounding order. If no garments are clearly
+            identifiable, respond with {"garments": []}.
+            """;
+
+    private static final String BOX_AND_QUALITY_RULES = """
+            Each box2d must enclose the complete garment silhouette as it exists in the photo,
+            not only the pixels of fabric that are currently uncovered. Soft occlusion such as
+            hair, hands, or similar covering part of a garment still counts: report the garment
+            and expand the box to include the covered region. For example, if hair falls over a
+            dress, the box must cover the whole dress; hair may appear inside the crop. Do not
+            shrink the box to exclude occluders or to hug only non-occluded fabric.
+
+            Only report a garment if it is clearly identifiable from the photo. Leave out any
+            garment that is mostly hidden by hard occlusion (another garment or object covering
+            most of it), cut off by the edge of the frame such that a meaningful portion of it
+            is missing, too small or blurry to make out its details, or only glimpsed at a steep
+            angle or in the background. Soft occlusion by hair or hands is not a reason to omit
+            or truncate. If you are unsure whether a garment is clear enough, do not report it.
+            """;
+
+    private static final String LABEL_RULES = """
+            Give the garment a short English label (field "label") and a matching Chinese label
+            (field "labelZh") using everyday words a normal person would say - e.g.
+            "blue denim jacket" / "蓝色牛仔夹克" or "black leather ankle boots" / "黑色皮革短靴".
+            Keep labels short and concrete (colour + material/type is fine). Avoid fancy or
+            fashion-magazine phrasing in both languages; Chinese should sound natural, not like
+            ad copy. Never return masks or segmentation, only bounding boxes.
+            """;
+
+    private static final String MULTI_SYSTEM_INSTRUCTION = """
             You are a fashion assistant analyzing a photo of wardrobe items or an outfit.
             Identify every distinct garment visible in the image: tops, bottoms, dresses,
             outerwear, and shoes (including boots and sandals). Do not report accessories
             such as bags, hats, belts, scarves, jewelry, sunglasses, phones, or similar items.
-            Ignore body parts, faces, background, and any non-clothing objects. Give each
-            garment a short, descriptive label, e.g. "blue denim jacket" or "black leather
-            ankle boots". If the same kind of garment appears more than once, distinguish them
-            by color, position, or other visible characteristics. Never return masks or
-            segmentation, only bounding boxes.
+            Ignore body parts, faces, background, and any non-clothing objects as garments
+            themselves.
+            """
+            + LABEL_RULES
+            + """
+            If the same kind of garment appears more than once, distinguish them by color,
+            position, or other visible characteristics in both languages.
 
-            Only report a garment if it is clearly visible and a clean, mostly-complete crop of
-            it could actually be produced from its bounding box. Leave out any garment that is
-            heavily occluded (by another garment, a body part, or another object), cut off by
-            the edge of the frame such that a meaningful portion of it is missing, too small
-            or blurry to make out its details, or only glimpsed at a steep angle or in the
-            background. If you are unsure whether a garment is clear enough, do not report it.
+            """
+            + BOX_AND_QUALITY_RULES
+            + "\n"
+            + RESPONSE_SHAPE;
 
-            Respond with ONLY a JSON object of this exact shape, and nothing else:
-            {"garments": [{"label": "<short descriptive label>", "box2d": [yMin, xMin, yMax, xMax]}]}
-            The top-level key MUST be named exactly "garments" - not "accessories", "items",
-            "detections", or any other name. Each box2d is an array of exactly 4 integers
-            normalized to a 0-1000 scale, in [yMin, xMin, yMax, xMax] order (top, left, bottom,
-            right edges of the box). If no garments are clearly visible, respond with
-            {"garments": []}.
-            """;
+    private static final String SINGLE_PRIMARY_SYSTEM_INSTRUCTION = """
+            You are a fashion assistant analyzing a shopping or product photo of a clothing item
+            someone is considering buying. Return at most ONE garment: the single purchase
+            candidate the shopper is evaluating. Prefer the main product - typically the largest,
+            most centered, or most clearly product-focused item (tops, bottoms, dresses,
+            outerwear, or shoes including boots and sandals). If the photo shows a model or
+            mannequin wearing multiple layers, choose the garment that is clearly the product
+            being sold; ignore styling layers that are not the purchase focus. Do not report
+            accessories such as bags, hats, belts, scarves, jewelry, sunglasses, phones, or
+            similar items. Ignore body parts, faces, background, and any non-clothing objects
+            as garments themselves. The "garments" array must contain 0 or 1 item - never more.
+            """
+            + LABEL_RULES
+            + "\n"
+            + BOX_AND_QUALITY_RULES
+            + "\n"
+            + RESPONSE_SHAPE;
 
-    private static final String PROMPT =
-            "Detect every garment (including shoes) in this image that is clearly visible enough to produce a good crop. Ignore accessories.";
+    private static final String MULTI_PROMPT =
+            "Detect every garment (including shoes) that is clearly identifiable. "
+                    + "Use full-extent bounding boxes that include soft occlusion such as hair or hands. "
+                    + "Ignore accessories.";
+
+    private static final String SINGLE_PRIMARY_PROMPT =
+            "Detect the single primary clothing item the shopper would buy from this photo "
+                    + "(including shoes if that is the product). Return at most one garment. "
+                    + "Use a full-extent bounding box that includes soft occlusion such as hair or hands. "
+                    + "Ignore accessories and secondary styling layers.";
 
     private final OpenAIClient qwenClient;
     private final QwenProperties qwenProperties;
@@ -94,20 +147,39 @@ public class QwenGarmentDetector implements GarmentDetector {
     }
 
     @Override
-    public List<DetectedGarment> detectGarments(byte[] imageBytes, String contentType) {
+    public List<DetectedGarment> detectGarments(byte[] imageBytes, String contentType, DetectionMode mode) {
+        DetectionMode effectiveMode = mode == null ? DetectionMode.MULTI : mode;
+        String systemInstruction = systemInstruction(effectiveMode);
+        String prompt = prompt(effectiveMode);
+
         ChatCompletionCreateParams params = ChatCompletionCreateParams.builder()
                 .model(qwenProperties.model())
-                .addSystemMessage(SYSTEM_INSTRUCTION)
-                .addUserMessageOfArrayOfContentParts(List.of(imagePart(imageBytes, contentType), textPart(PROMPT)))
+                .addSystemMessage(systemInstruction)
+                .addUserMessageOfArrayOfContentParts(List.of(imagePart(imageBytes, contentType), textPart(prompt)))
                 .responseFormat(ResponseFormatJsonObject.builder().build())
                 .build();
 
         long startedAt = System.currentTimeMillis();
         ChatCompletion completion = qwenClient.chat().completions().create(params);
-        log.info("Qwen model {} garment detection call completed in {} ms ({} bytes in, contentType={})",
-                qwenProperties.model(), System.currentTimeMillis() - startedAt, imageBytes.length, contentType);
+        log.info(
+                "Qwen model {} garment detection ({}) call completed in {} ms ({} bytes in, contentType={})",
+                qwenProperties.model(),
+                effectiveMode,
+                System.currentTimeMillis() - startedAt,
+                imageBytes.length,
+                contentType);
 
-        return parse(content(completion));
+        return parse(content(completion), effectiveMode);
+    }
+
+    private static String systemInstruction(DetectionMode mode) {
+        return mode == DetectionMode.SINGLE_PRIMARY
+                ? SINGLE_PRIMARY_SYSTEM_INSTRUCTION
+                : MULTI_SYSTEM_INSTRUCTION;
+    }
+
+    private static String prompt(DetectionMode mode) {
+        return mode == DetectionMode.SINGLE_PRIMARY ? SINGLE_PRIMARY_PROMPT : MULTI_PROMPT;
     }
 
     private ChatCompletionContentPart imagePart(byte[] imageBytes, String contentType) {
@@ -128,7 +200,7 @@ public class QwenGarmentDetector implements GarmentDetector {
 
     // Not logged on the success path: GarmentDetectionService logs the resulting count/labels
     // right after calling detectGarments(), so a second log line here would just be a duplicate.
-    private List<DetectedGarment> parse(String json) {
+    private List<DetectedGarment> parse(String json, DetectionMode mode) {
         ParsedGarments parsed = parseOnce(json);
         if (parsed != null && !parsed.needsRepair()) {
             return parsed.garments();
@@ -136,7 +208,7 @@ public class QwenGarmentDetector implements GarmentDetector {
 
         log.warn("Qwen garment detection response was unparseable or had no usable garments, retrying once "
                 + "with a repair prompt. Original response: {}", json);
-        ParsedGarments repaired = parseOnce(repair(json));
+        ParsedGarments repaired = parseOnce(repair(json, mode));
         if (repaired != null && !repaired.needsRepair()) {
             return repaired.garments();
         }
@@ -183,7 +255,12 @@ public class QwenGarmentDetector implements GarmentDetector {
                 log.warn("Dropping Qwen garment detection with missing label: {}", r);
                 continue;
             }
-            valid.add(new DetectedGarment(r.label().trim(), r.box2d()));
+            // Qwen returns [xMin, yMin, xMax, yMax]; DetectedGarment / ImageCropper use
+            // [yMin, xMin, yMax, xMax]. Swap here so the rest of the pipeline stays consistent.
+            int[] qwenBox = r.box2d();
+            int[] normalizedBox = {qwenBox[1], qwenBox[0], qwenBox[3], qwenBox[2]};
+            String labelZh = r.labelZh() == null || r.labelZh().isBlank() ? null : r.labelZh().trim();
+            valid.add(new DetectedGarment(r.label().trim(), labelZh, normalizedBox));
         }
         return valid;
     }
@@ -211,10 +288,10 @@ public class QwenGarmentDetector implements GarmentDetector {
      * what it saw and just needs to reformat it. Called at most once per {@link #detectGarments}
      * invocation; if the repaired response is still unusable, {@link #parse} gives up and throws.
      */
-    private String repair(String badJson) {
+    private String repair(String badJson, DetectionMode mode) {
         ChatCompletionCreateParams params = ChatCompletionCreateParams.builder()
                 .model(qwenProperties.model())
-                .addSystemMessage(SYSTEM_INSTRUCTION)
+                .addSystemMessage(systemInstruction(mode))
                 .addUserMessage("Your previous response was not valid for the required JSON shape. Here is what "
                         + "you returned:\n" + badJson
                         + "\n\nReturn ONLY a corrected JSON object of the exact required shape described above, "
@@ -224,8 +301,8 @@ public class QwenGarmentDetector implements GarmentDetector {
 
         long startedAt = System.currentTimeMillis();
         ChatCompletion completion = qwenClient.chat().completions().create(params);
-        log.info("Qwen model {} garment detection repair call completed in {} ms",
-                qwenProperties.model(), System.currentTimeMillis() - startedAt);
+        log.info("Qwen model {} garment detection ({}) repair call completed in {} ms",
+                qwenProperties.model(), mode, System.currentTimeMillis() - startedAt);
         return content(completion);
     }
 
@@ -258,6 +335,6 @@ public class QwenGarmentDetector implements GarmentDetector {
         }
     }
 
-    private record RawDetection(String label, int[] box2d) {
+    private record RawDetection(String label, String labelZh, int[] box2d) {
     }
 }

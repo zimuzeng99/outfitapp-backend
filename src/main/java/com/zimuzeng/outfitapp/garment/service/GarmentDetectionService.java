@@ -22,8 +22,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Runs the garment-detection + cropping pipeline for a single {@link UploadItem}, using whichever
- * {@link GarmentDetector} implementation is active (see {@code garment.analysis-provider}).
+ * Runs the garment-detection + cropping pipeline for a single {@link UploadItem} via
+ * {@link GarmentDetector}.
  *
  * <p>Deliberately has no dependency on {@code UploadService} (and vice versa) — upload lifecycle
  * and AI processing are separate concerns. {@link com.zimuzeng.outfitapp.upload.service.UploadNotificationListener}
@@ -43,7 +43,6 @@ public class GarmentDetectionService {
     private final GarmentExtractionRepository garmentExtractionRepository;
     private final GarmentRepository garmentRepository;
     private final GarmentDetector garmentDetector;
-    private final GeminiGarmentCutoutGenerator geminiGarmentCutoutGenerator;
     private final GarmentMetadataService garmentMetadataService;
     private final ImageCropper imageCropper;
     private final Storage storage;
@@ -89,18 +88,15 @@ public class GarmentDetectionService {
                 String cropKey = cropObjectKey(item, index);
                 uploadToGcs(cropKey, crop);
 
-                byte[] cleanCrop = geminiGarmentCutoutGenerator.generateCleanImage(crop, "image/jpeg", garment.label());
-                String cleanCropKey = cleanCropObjectKey(item, index);
-                uploadToGcs(cleanCropKey, cleanCrop);
-
-                log.info("Processed garment {}/{} for item {} (label=\"{}\"): crop={}, cutout={}", index + 1,
-                        detected.size(), item.getId(), garment.label(), cropKey, cleanCropKey);
+                log.info("Processed garment {}/{} for item {} (label=\"{}\", labelZh=\"{}\", box2d=[yMin={}, xMin={}, yMax={}, xMax={}]): crop={}",
+                        index + 1, detected.size(), item.getId(), garment.label(), garment.labelZh(),
+                        garment.box2d()[0], garment.box2d()[1], garment.box2d()[2], garment.box2d()[3], cropKey);
 
                 Garment savedGarment = garmentRepository.save(Garment.builder()
                         .uploadItem(item)
                         .label(garment.label())
+                        .labelZh(garment.labelZh())
                         .objectKey(cropKey)
-                        .cleanObjectKey(cleanCropKey)
                         .boxYMin(garment.box2d()[0])
                         .boxXMin(garment.box2d()[1])
                         .boxYMax(garment.box2d()[2])
@@ -151,10 +147,6 @@ public class GarmentDetectionService {
 
     private String cropObjectKey(UploadItem item, int index) {
         return cropPrefix(item) + index + ".jpg";
-    }
-
-    private String cleanCropObjectKey(UploadItem item, int index) {
-        return cropPrefix(item) + index + "-clean.jpg";
     }
 
     private String truncate(String message) {

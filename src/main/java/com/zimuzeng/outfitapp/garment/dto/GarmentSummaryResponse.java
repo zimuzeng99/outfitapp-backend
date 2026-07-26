@@ -12,7 +12,7 @@ import java.util.UUID;
  */
 public record GarmentSummaryResponse(UUID garmentId, String label, String imageUrl, Instant imageUrlExpiresAt) {
 
-    public static GarmentSummaryResponse fromEntity(Garment garment, SignedReadUrl signedUrl) {
-        return new GarmentSummaryResponse(garment.getId(), garment.getLabel(), signedUrl.url(), signedUrl.expiresAt());
+    public static GarmentSummaryResponse fromEntity(Garment garment, String displayLabel, SignedReadUrl signedUrl) {
+        return new GarmentSummaryResponse(garment.getId(), displayLabel, signedUrl.url(), signedUrl.expiresAt());
     }
 }

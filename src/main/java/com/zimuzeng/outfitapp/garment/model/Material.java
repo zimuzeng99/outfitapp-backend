@@ -1,19 +1,14 @@
 package com.zimuzeng.outfitapp.garment.model;
 
+/**
+ * Visually obvious material/construction class only — fibre blends are not reliable from a photo.
+ */
 public enum Material {
-    COTTON,
     DENIM,
-    WOOL,
-    POLYESTER,
     LEATHER,
-    SILK,
-    LINEN,
-    CASHMERE,
-    NYLON,
-    SUEDE,
-    VELVET,
     KNIT,
-    BLEND,
+    WOVEN,
+    SHEER,
     OTHER,
-    NOT_APPLICABLE
+    UNKNOWN
 }

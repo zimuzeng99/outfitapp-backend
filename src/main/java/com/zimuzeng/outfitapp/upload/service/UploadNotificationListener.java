@@ -4,6 +4,9 @@ import com.google.cloud.pubsub.v1.AckReplyConsumer;
 import com.google.cloud.pubsub.v1.Subscriber;
 import com.google.pubsub.v1.ProjectSubscriptionName;
 import com.google.pubsub.v1.PubsubMessage;
+import com.zimuzeng.outfitapp.buyadvice.model.BuyAdvice;
+import com.zimuzeng.outfitapp.buyadvice.service.BuyAdviceProcessingService;
+import com.zimuzeng.outfitapp.buyadvice.service.BuyAdviceService;
 import com.zimuzeng.outfitapp.config.GcsProperties;
 import com.zimuzeng.outfitapp.garment.service.GarmentDetectionService;
 import com.zimuzeng.outfitapp.upload.model.UploadItem;
@@ -16,23 +19,20 @@ import org.springframework.stereotype.Component;
 
 /**
  * Pulls GCS "object finalized" notifications off the Pub/Sub subscription configured under
- * {@code gcs.pubsub}, marks the corresponding {@link UploadItem} as uploaded, and then runs
- * garment detection on it. See {@link com.zimuzeng.outfitapp.config.GcsConfig} for the one-time
- * infra setup required for GCS to publish these notifications.
+ * {@code gcs.pubsub}, then routes by object key:
+ * <ul>
+ *   <li>wardrobe upload items → {@link UploadService} + {@link GarmentDetectionService}</li>
+ *   <li>buy-advice originals → {@link BuyAdviceService} + {@link BuyAdviceProcessingService}</li>
+ *   <li>crop/other keys → ignored (acked)</li>
+ * </ul>
+ * See {@link com.zimuzeng.outfitapp.config.GcsConfig} for the one-time infra setup required for
+ * GCS to publish these notifications.
  *
- * <p>{@link UploadService} and {@link GarmentDetectionService} are independent of each other
- * (upload lifecycle vs. AI processing are separate concerns); this listener is the one place
- * that coordinates calling both, since it owns the Pub/Sub ack/nack decision. The whole handler
- * runs synchronously before acking, so if the process crashes mid-processing, the message is
- * never acked and Pub/Sub redelivers it, causing the whole chain (including garment detection)
- * to safely retry — no separate queue or async plumbing needed. On failure the message is
- * always nacked (never swallowed), regardless of whether the failure came from {@link
- * UploadService} or {@link GarmentDetectionService}.
- *
- * <p>Neither this class nor {@link GarmentDetectionService} counts or caps attempts themselves
- * — the subscription's dead-letter policy (see {@link com.zimuzeng.outfitapp.config.GcsConfig}
- * for the infra setup) is the single retry cap for this whole pipeline: after 5 failed delivery
- * attempts, Pub/Sub stops redelivering and routes the message to a DLQ topic instead.
+ * <p>The whole handler runs synchronously before acking, so if the process crashes mid-
+ * processing, the message is never acked and Pub/Sub redelivers it. On failure the message is
+ * always nacked (never swallowed). The subscription's dead-letter policy (see
+ * {@link com.zimuzeng.outfitapp.config.GcsConfig}) is the single retry cap: after 5 failed
+ * delivery attempts, Pub/Sub stops redelivering and routes the message to a DLQ topic instead.
  */
 @Component
 @RequiredArgsConstructor
@@ -49,6 +49,8 @@ public class UploadNotificationListener {
 
     private final UploadService uploadService;
     private final GarmentDetectionService garmentDetectionService;
+    private final BuyAdviceService buyAdviceService;
+    private final BuyAdviceProcessingService buyAdviceProcessingService;
     private final GcsProperties gcsProperties;
 
     private Subscriber subscriber;
@@ -74,7 +76,12 @@ public class UploadNotificationListener {
 
         try {
             Optional<UploadItem> item = uploadService.markItemUploaded(objectId);
-            item.ifPresent(garmentDetectionService::detectAndExtractGarments);
+            if (item.isPresent()) {
+                garmentDetectionService.detectAndExtractGarments(item.get());
+            } else {
+                Optional<BuyAdvice> advice = buyAdviceService.markUploaded(objectId);
+                advice.ifPresent(buyAdviceProcessingService::process);
+            }
             consumer.ack();
         } catch (RuntimeException ex) {
             log.error("Failed to process GCS upload notification: {} (delivery attempt {}/{})",

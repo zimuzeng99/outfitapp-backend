@@ -1,6 +1,7 @@
 package com.zimuzeng.outfitapp.user.controller;
 
 import com.zimuzeng.outfitapp.user.dto.CreateUserRequest;
+import com.zimuzeng.outfitapp.user.dto.CreateUserResult;
 import com.zimuzeng.outfitapp.user.dto.UserResponse;
 import com.zimuzeng.outfitapp.user.service.UserService;
 import jakarta.validation.Valid;
@@ -28,7 +29,11 @@ public class UserController {
 
     @PostMapping
     public ResponseEntity<UserResponse> createUser(@Valid @RequestBody CreateUserRequest request) {
-        UserResponse response = userService.createUser(request);
-        return ResponseEntity.created(URI.create("/api/users/" + response.id())).body(response);
+        CreateUserResult result = userService.createUser(request);
+        if (result.created()) {
+            return ResponseEntity.created(URI.create("/api/users/" + result.user().id()))
+                    .body(result.user());
+        }
+        return ResponseEntity.ok(result.user());
     }
 }

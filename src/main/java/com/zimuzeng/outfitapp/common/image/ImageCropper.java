@@ -13,8 +13,8 @@ import javax.imageio.ImageIO;
 import org.springframework.stereotype.Component;
 
 /**
- * Crops a region out of an image using Gemini's normalized bounding-box convention and
- * re-encodes it as JPEG.
+ * Crops a region out of an image using a normalized 0-1000 bounding-box convention
+ * ({@code [yMin, xMin, yMax, xMax]}) and re-encodes it as JPEG.
  *
  * <p>Only decodes formats the JDK's built-in {@link ImageIO} supports natively (JPEG, PNG, etc.)
  * for now. Content types such as {@code image/heic} and {@code image/webp} aren't decodable and
@@ -28,7 +28,7 @@ public class ImageCropper {
      * @param imageBytes  the original, uncropped image
      * @param contentType the original image's content type, used only for a clearer error message
      *                    if the format can't be decoded
-     * @param box2d       Gemini's bounding box, normalized 0-1000, in {@code [yMin, xMin, yMax, xMax]} order
+     * @param box2d       bounding box, normalized 0-1000, in {@code [yMin, xMin, yMax, xMax]} order
      * @return the cropped region re-encoded as JPEG bytes
      */
     public byte[] crop(byte[] imageBytes, String contentType, int[] box2d) {

@@ -13,8 +13,15 @@ info:
     4. `GET /api/uploads/batches/{batchId}` — poll upload status.
     5. `GET /api/uploads/items/{itemId}/extraction` — poll garment-extraction status for an item.
     6. `GET /api/uploads/items/{itemId}/garments` — fetch detected garments + metadata once extraction completes.
-    7. `GET /api/users/{userId}/garments` — list the user's wardrobe.
-    8. `POST /api/users/{userId}/outfit-recommendations` — get outfit suggestions for a free-text context.
+    7. `GET /api/users/{userId}/garments` — list the user's wardrobe (optional metadata filters).
+    8. `PATCH /api/users/{userId}/garments/{garmentId}` — rename a garment label for the requested language.
+    9. `DELETE /api/users/{userId}/garments/{garmentId}` — soft-delete a garment from the wardrobe.
+    10. `POST /api/users/{userId}/outfit-recommendations` — get up to 5 outfit suggestions for a
+        free-text context. When `hasMore` is true, call again with prior outfits in `excludeOutfits`
+        to request another batch.
+    11. `POST /api/users/{userId}/buy-advice` — create a buy-advice job (signed PUT URL for a shopping-photo candidate).
+    12. Client uploads the candidate photo with `PUT` to `uploadUrl`, then polls
+        `GET /api/users/{userId}/buy-advice/{adviceId}` for BUY / CONSIDER / SKIP.
 
     **Auth:** none configured today — all endpoints are open.
     **Errors:** JSON body `{ "code": "<ErrorCode>", "message": "..." }` (see `ErrorResponse`).
@@ -27,9 +34,11 @@ tags:
   - name: Uploads
     description: Photo upload batches and signed GCS URLs
   - name: Garments
-    description: Garment extraction status, detected garments, and wardrobe listing
+    description: Garment extraction status, detected garments, wardrobe listing, label edits, and deletion
   - name: Outfits
     description: Outfit recommendations
+  - name: BuyAdvice
+    description: Ephemeral "should I buy this?" advice against the user's wardrobe
 
 paths:
   /api/users:
@@ -59,6 +68,12 @@ paths:
             schema:
               $ref: "#/components/schemas/CreateUserRequest"
       responses:
+        "200":
+          description: User already exists (idempotent)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserResponse"
         "201":
           description: User created
           headers:
@@ -181,6 +196,7 @@ paths:
       description: Returns full garment details including bounding box, signed image URLs, and fashion metadata.
       parameters:
         - $ref: "#/components/parameters/itemId"
+        - $ref: "#/components/parameters/lang"
       responses:
         "200":
           description: Detected garments (may be empty if extraction has not completed)
@@ -204,9 +220,96 @@ paths:
       tags: [Garments]
       operationId: getGarmentsForUser
       summary: List a user's wardrobe garments
-      description: Lightweight summaries suitable for a wardrobe grid (thumbnail + label).
+      description: |
+        Lightweight summaries suitable for a wardrobe grid (thumbnail + label).
+        Optional closed-enum query filters narrow the list (AND across dimensions, OR within a
+        repeated param). When any filter is present, only garments with completed metadata that
+        match are returned. Empty `season` on a garment means all-season and matches any season filter.
       parameters:
         - $ref: "#/components/parameters/userId"
+        - $ref: "#/components/parameters/lang"
+        - name: group
+          in: query
+          required: false
+          schema:
+            type: array
+            items:
+              $ref: "#/components/schemas/GarmentGroup"
+          style: form
+          explode: true
+        - name: category
+          in: query
+          required: false
+          schema:
+            type: array
+            items:
+              $ref: "#/components/schemas/GarmentCategory"
+          style: form
+          explode: true
+        - name: colour
+          in: query
+          required: false
+          schema:
+            type: array
+            items:
+              $ref: "#/components/schemas/Colour"
+          style: form
+          explode: true
+        - name: pattern
+          in: query
+          required: false
+          schema:
+            type: array
+            items:
+              $ref: "#/components/schemas/GarmentPattern"
+          style: form
+          explode: true
+        - name: season
+          in: query
+          required: false
+          schema:
+            type: array
+            items:
+              $ref: "#/components/schemas/Season"
+          style: form
+          explode: true
+        - name: occasion
+          in: query
+          required: false
+          schema:
+            type: array
+            items:
+              $ref: "#/components/schemas/Occasion"
+          style: form
+          explode: true
+        - name: minFormality
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 5
+        - name: maxFormality
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 5
+        - name: warmth
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/Warmth"
+        - name: styleTag
+          in: query
+          required: false
+          schema:
+            type: array
+            items:
+              $ref: "#/components/schemas/StyleTag"
+          style: form
+          explode: true
       responses:
         "200":
           description: User garments
@@ -225,6 +328,72 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /api/users/{userId}/garments/{garmentId}:
+    patch:
+      tags: [Garments]
+      operationId: updateGarmentLabel
+      summary: Update a garment's display label
+      description: |
+        Updates only the label for the language selected by `lang` (`en` → English `label`,
+        `zh` → Chinese `labelZh`). The other language is left unchanged. Returns the updated
+        wardrobe summary so the client can refresh the grid row. Returns `404` if the user does
+        not exist, or if the garment does not exist, is already deleted, or is not owned by that
+        user.
+      parameters:
+        - $ref: "#/components/parameters/userId"
+        - $ref: "#/components/parameters/garmentId"
+        - $ref: "#/components/parameters/lang"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateGarmentLabelRequest"
+      responses:
+        "200":
+          description: Updated garment summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GarmentSummaryResponse"
+        "400":
+          description: Validation failed or unsupported lang
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: User or garment not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      tags: [Garments]
+      operationId: deleteGarment
+      summary: Soft-delete a garment from a user's wardrobe
+      description: |
+        Soft-deletes the garment by setting `deletedAt`. The row, metadata, and GCS objects are
+        retained. Soft-deleted garments disappear from wardrobe listing, per-item garment lists,
+        and outfit recommendations. Returns `404` if the user does not exist, or if the garment
+        does not exist, is already deleted, or is not owned by that user.
+      parameters:
+        - $ref: "#/components/parameters/userId"
+        - $ref: "#/components/parameters/garmentId"
+      responses:
+        "204":
+          description: Garment soft-deleted
+        "404":
+          description: User or garment not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        default:
+          $ref: "#/components/responses/Error"
+
   /api/users/{userId}/outfit-recommendations:
     post:
       tags: [Outfits]
@@ -232,9 +401,15 @@ paths:
       summary: Recommend outfits for a user and context
       description: |
         Free-text `context` describes the occasion / vibe (e.g. "casual Friday brunch").
-        Requires the user to already have garments with completed metadata.
+        Returns up to 5 good outfits (fewer when the wardrobe cannot support more without forcing
+        weak looks). Internally the server may compose one extra outfit and sets `hasMore` true
+        only when that surplus exists. The client may then request another batch by resending the
+        same `context` with all previously shown outfits in `excludeOutfits` (garment-id lists).
+        Requires the user to already have garments with completed metadata. Optional `lang`
+        selects language for outfit `title`/`rationale` and nested garment `label`s.
       parameters:
         - $ref: "#/components/parameters/userId"
+        - $ref: "#/components/parameters/lang"
       requestBody:
         required: true
         content:
@@ -269,6 +444,86 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /api/users/{userId}/buy-advice:
+    post:
+      tags: [BuyAdvice]
+      operationId: createBuyAdvice
+      summary: Create a buy-advice job with a signed GCS upload URL
+      description: |
+        Creates an ephemeral buy-advice job for a shopping-photo candidate. Detection targets a
+        **single** purchase-candidate garment (unlike wardrobe uploads, which extract every
+        distinct item). Metadata analysis matches the wardrobe pipeline, but the candidate is
+        **not** added to the wardrobe. After the client PUTs the image to `uploadUrl`, poll
+        `GET /api/users/{userId}/buy-advice/{adviceId}` until `COMPLETED` or `FAILED`.
+        Optional `context` biases advice (e.g. "for work interviews").
+        Optional `lang` selects the language for stored user-facing copy (`rationale` and outfit
+        `title`/`rationale`) generated during async processing. Structured candidate metadata
+        remains English.
+      parameters:
+        - $ref: "#/components/parameters/userId"
+        - $ref: "#/components/parameters/lang"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateBuyAdviceRequest"
+      responses:
+        "201":
+          description: Buy-advice job created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateBuyAdviceResponse"
+        "400":
+          description: Validation failed or unsupported lang
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/users/{userId}/buy-advice/{adviceId}:
+    get:
+      tags: [BuyAdvice]
+      operationId: getBuyAdvice
+      summary: Poll buy-advice status and result
+      description: |
+        Returns job status. When `COMPLETED`, includes `verdict` (`BUY` / `CONSIDER` / `SKIP`),
+        a short plain-language rationale, candidate metadata, optional similar owned pieces
+        (only when material to the rationale), a rough estimated range
+        (`compatibleOutfitCountMin`–`compatibleOutfitCountMax`) of wardrobe looks the candidate
+        enables, and up to a few example `potentialOutfits` that each include the uploaded
+        candidate plus wardrobe pieces. Internal scores and garment ids never appear in rationale
+        text. User-facing copy language is fixed at create (`lang` on POST).
+        Optional GET `lang` localizes candidate/wardrobe labels only (`label` vs `labelZh`).
+      parameters:
+        - $ref: "#/components/parameters/userId"
+        - $ref: "#/components/parameters/adviceId"
+        - $ref: "#/components/parameters/lang"
+      responses:
+        "200":
+          description: Buy-advice job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BuyAdviceResponse"
+        "404":
+          description: Buy advice or user not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        default:
+          $ref: "#/components/responses/Error"
+
 components:
   parameters:
     userId:
@@ -292,6 +547,33 @@ components:
       schema:
         type: string
         format: uuid
+    garmentId:
+      name: garmentId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    adviceId:
+      name: adviceId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    lang:
+      name: lang
+      in: query
+      required: false
+      description: >
+        Language preference. `en` (default) or `zh`. On outfit recommendations and buy-advice
+        create, selects the language for generated user-facing titles/rationales. On garment and
+        buy-advice GET responses, selects English vs Chinese garment labels when available
+        (otherwise English). Structured metadata fields stay English.
+      schema:
+        type: string
+        enum: [en, zh]
+        default: en
 
   responses:
     Error:
@@ -304,32 +586,37 @@ components:
   schemas:
     CreateUserRequest:
       type: object
-      required: [firstName, lastName, email]
+      required: [id]
       properties:
+        id:
+          type: string
+          format: uuid
+          description: Client-generated user id
         firstName:
           type: string
-          minLength: 1
         lastName:
           type: string
-          minLength: 1
         email:
           type: string
           format: email
 
     UserResponse:
       type: object
-      required: [id, firstName, lastName, email, createdAt, updatedAt]
+      required: [id, createdAt, updatedAt]
       properties:
         id:
           type: string
           format: uuid
         firstName:
           type: string
+          nullable: true
         lastName:
           type: string
+          nullable: true
         email:
           type: string
           format: email
+          nullable: true
         createdAt:
           type: string
           format: date-time
@@ -441,23 +728,23 @@ components:
       type: object
       description: Fashion metadata for a garment. Enum fields are serialized as their string names.
       properties:
+        garmentGroup:
+          $ref: "#/components/schemas/GarmentGroup"
         category:
           $ref: "#/components/schemas/GarmentCategory"
-        subcategory:
-          type: string
-          nullable: true
         primaryColour:
-          type: string
+          $ref: "#/components/schemas/Colour"
         secondaryColours:
           type: array
           items:
-            type: string
+            $ref: "#/components/schemas/Colour"
         pattern:
           $ref: "#/components/schemas/GarmentPattern"
         seasons:
           type: array
           items:
             $ref: "#/components/schemas/Season"
+          description: Empty list means all-season / year-round.
         occasions:
           type: array
           items:
@@ -474,17 +761,25 @@ components:
           $ref: "#/components/schemas/Neckline"
         length:
           $ref: "#/components/schemas/GarmentLength"
+        layerRole:
+          $ref: "#/components/schemas/LayerRole"
         warmth:
           $ref: "#/components/schemas/Warmth"
         formality:
           type: integer
           minimum: 1
           maximum: 5
-          description: Formality score assigned by the analyzer
+          description: Dress-code intensity (1 = very casual, 5 = very formal)
         styleTags:
           type: array
           items:
-            type: string
+            $ref: "#/components/schemas/StyleTag"
+        description:
+          type: string
+          nullable: true
+          description: >
+            Plain-language visual description of the garment (English), richer than the
+            structured metadata fields alone. Null for garments extracted before this field existed.
 
     GarmentResponse:
       type: object
@@ -494,6 +789,7 @@ components:
           format: uuid
         label:
           type: string
+          description: Short garment description; language selected by the `lang` query parameter
           example: blue denim jacket
         box2d:
           type: array
@@ -509,15 +805,6 @@ components:
         imageUrlExpiresAt:
           type: string
           format: date-time
-        cleanImageUrl:
-          type: string
-          format: uri
-          nullable: true
-          description: Signed read URL for the clean product-style cutout (may be null)
-        cleanImageUrlExpiresAt:
-          type: string
-          format: date-time
-          nullable: true
         createdAt:
           type: string
           format: date-time
@@ -535,12 +822,23 @@ components:
           format: uuid
         label:
           type: string
+          description: Short garment description; language selected by the `lang` query parameter
         imageUrl:
           type: string
           format: uri
         imageUrlExpiresAt:
           type: string
           format: date-time
+
+    UpdateGarmentLabelRequest:
+      type: object
+      required: [label]
+      properties:
+        label:
+          type: string
+          minLength: 1
+          maxLength: 120
+          description: New display label for the language selected by the `lang` query parameter
 
     OutfitRecommendationRequest:
       type: object
@@ -551,6 +849,19 @@ components:
           minLength: 1
           description: Free-text occasion / context for recommendations
           example: casual Friday brunch
+        excludeOutfits:
+          type: array
+          description: |
+            Optional list of previously shown outfits. Each inner array is the garment IDs of one
+            outfit already returned to the client. Used to avoid repeating those combinations when
+            requesting another batch. Omit or send [] on the first request.
+          items:
+            type: array
+            items:
+              type: string
+              format: uuid
+          example:
+            - ["550e8400-e29b-41d4-a716-446655440000", "550e8400-e29b-41d4-a716-446655440001"]
 
     RecommendedOutfitResponse:
       type: object
@@ -566,14 +877,192 @@ components:
 
     OutfitRecommendationResponse:
       type: object
-      required: [context, outfits]
+      required: [context, outfits, hasMore]
       properties:
         context:
           type: string
         outfits:
           type: array
+          maxItems: 5
+          description: Up to 5 recommended outfits; may be fewer when quality cannot be maintained
           items:
             $ref: "#/components/schemas/RecommendedOutfitResponse"
+        hasMore:
+          type: boolean
+          description: |
+            True when at least one additional good outfit was available beyond the up-to-5
+            returned in this response. When true, the client may request another batch with
+            those outfits (plus any earlier ones) in excludeOutfits.
+
+    CreateBuyAdviceRequest:
+      type: object
+      required: [contentType]
+      properties:
+        contentType:
+          type: string
+          description: Image content type for the signed PUT (e.g. image/jpeg, image/png)
+          example: image/jpeg
+        context:
+          type: string
+          maxLength: 2000
+          description: Optional free-text use case that biases advice
+          example: for work interviews
+
+    CreateBuyAdviceResponse:
+      type: object
+      required: [adviceId, status, objectKey, uploadUrl, uploadUrlExpiresAt]
+      properties:
+        adviceId:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/BuyAdviceStatus"
+        objectKey:
+          type: string
+        uploadUrl:
+          type: string
+          format: uri
+        uploadUrlExpiresAt:
+          type: string
+          format: date-time
+
+    BuyAdviceCandidateResponse:
+      type: object
+      properties:
+        label:
+          type: string
+        imageUrl:
+          type: string
+          format: uri
+        imageUrlExpiresAt:
+          type: string
+          format: date-time
+        metadata:
+          $ref: "#/components/schemas/GarmentMetadataResponse"
+
+    BuyAdviceOverlapResponse:
+      type: object
+      properties:
+        nearDuplicates:
+          type: array
+          description: >
+            Similar owned pieces only when that similarity is material to the advice
+            rationale; otherwise empty
+          items:
+            $ref: "#/components/schemas/GarmentSummaryResponse"
+
+    BuyAdviceOutfitGarmentResponse:
+      type: object
+      description: >
+        One piece in a buy-advice example outfit. Either the uploaded shopping candidate
+        (`garmentId` is null) or an owned wardrobe garment (`garmentId` is a real UUID).
+
+        **Client handling:** Always render with `label` + `imageUrl` (and honour
+        `imageUrlExpiresAt`). If `garmentId` is null, treat the row as the buy-advice
+        candidate — do **not** call wardrobe garment APIs (`GET`/`PATCH`/`DELETE`
+        `/garments/{garmentId}`). For richer candidate metadata, use the top-level
+        `BuyAdviceResponse.candidate` object. If `garmentId` is non-null, it is a normal
+        wardrobe garment id and may be used with those garment endpoints.
+      required: [label, imageUrl, imageUrlExpiresAt]
+      properties:
+        garmentId:
+          type: string
+          format: uuid
+          nullable: true
+          description: >
+            Wardrobe garment UUID, or null when this entry is the uploaded buy-advice
+            candidate (not stored in the wardrobe). Null means "not a wardrobe garment" —
+            never pass it to garment path parameters.
+        label:
+          type: string
+          description: Display label for the thumbnail / chip
+        imageUrl:
+          type: string
+          format: uri
+          description: Signed image URL for display
+        imageUrlExpiresAt:
+          type: string
+          format: date-time
+
+    BuyAdviceOutfitResponse:
+      type: object
+      properties:
+        title:
+          type: string
+          description: Short clear outfit title; no garment ids or scores
+        rationale:
+          type: string
+          description: >
+            Brief plain-language rationale explaining why the outfit works (same style as
+            outfit recommendations); no garment ids or internal scores
+        garments:
+          type: array
+          description: >
+            Ordered list for the outfit UI. Index 0 is always the uploaded candidate
+            (`garmentId` null); remaining items are complementary wardrobe pieces
+            (`garmentId` set). Render every entry the same way visually; only branch on
+            `garmentId` when navigating to garment detail or mutating wardrobe items.
+          items:
+            $ref: "#/components/schemas/BuyAdviceOutfitGarmentResponse"
+
+    BuyAdviceResponse:
+      type: object
+      required: [adviceId, status]
+      properties:
+        adviceId:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/BuyAdviceStatus"
+        context:
+          type: string
+          nullable: true
+        verdict:
+          allOf:
+            - $ref: "#/components/schemas/BuyVerdict"
+          nullable: true
+        rationale:
+          type: string
+          nullable: true
+          description: >
+            2–4 short everyday sentences that lead with the takeaway then explain why to buy,
+            skip, or consider, including a caveat when one is grounded in the wardrobe/context;
+            no garment ids, UUIDs, or internal scores
+        candidate:
+          allOf:
+            - $ref: "#/components/schemas/BuyAdviceCandidateResponse"
+          nullable: true
+        overlap:
+          allOf:
+            - $ref: "#/components/schemas/BuyAdviceOverlapResponse"
+          nullable: true
+        compatibleOutfitCountMin:
+          type: integer
+          minimum: 0
+          nullable: true
+          description: >
+            Lower bound of a rough estimate of how many strong, realistic outfits the candidate
+            can form with the user's wardrobe. Present when status is COMPLETED; may exceed the
+            length of potentialOutfits (curated examples, typically 0–3). Always ≤
+            compatibleOutfitCountMax. Both ends are 0 when the wardrobe cannot support outfits.
+            Null before completion.
+        compatibleOutfitCountMax:
+          type: integer
+          minimum: 0
+          nullable: true
+          description: >
+            Upper bound of a rough estimate of how many strong, realistic outfits the candidate
+            can form with the user's wardrobe. Present when status is COMPLETED; may exceed the
+            length of potentialOutfits (curated examples, typically 0–3). Always ≥
+            compatibleOutfitCountMin. Both ends are 0 when the wardrobe cannot support outfits.
+            Null before completion.
+        potentialOutfits:
+          type: array
+          items:
+            $ref: "#/components/schemas/BuyAdviceOutfitResponse"
+        errorMessage:
+          type: string
+          nullable: true
 
     ErrorResponse:
       type: object
@@ -594,61 +1083,100 @@ components:
       type: string
       enum: [PENDING, COMPLETED, FAILED]
 
+    BuyAdviceStatus:
+      type: string
+      enum: [PENDING, UPLOADED, PROCESSING, COMPLETED, FAILED]
+
+    BuyVerdict:
+      type: string
+      enum: [BUY, CONSIDER, SKIP]
+
+    GarmentGroup:
+      type: string
+      enum: [TOP, BOTTOM, ONE_PIECE, OUTERWEAR, FOOTWEAR, ACCESSORY]
+
     GarmentCategory:
       type: string
       enum:
         - T_SHIRT
         - SHIRT
         - BLOUSE
+        - TANK
         - SWEATER
+        - CARDIGAN
         - HOODIE
-        - BLAZER
-        - JACKET
-        - COAT
-        - DRESS
-        - SKIRT
+        - VEST
         - JEANS
         - TROUSERS
         - SHORTS
+        - SKIRT
         - LEGGINGS
+        - DRESS
         - JUMPSUIT
-        - SUIT
-        - SHOES
+        - OVERALLS
+        - BLAZER
+        - JACKET
+        - COAT
+        - PUFFER
+        - RAINCOAT
+        - SNEAKERS
         - BOOTS
         - SANDALS
+        - DRESS_SHOES
+        - FLATS
+        - HEELS
+        - LOAFERS
         - BAG
         - HAT
         - BELT
         - SCARF
         - JEWELRY
         - SUNGLASSES
+        - OTHER_ACCESSORY
         - OTHER
-        - NOT_APPLICABLE
+
+    Colour:
+      type: string
+      enum:
+        - BLACK
+        - WHITE
+        - GREY
+        - BEIGE
+        - BROWN
+        - NAVY
+        - BLUE
+        - GREEN
+        - YELLOW
+        - ORANGE
+        - RED
+        - PINK
+        - PURPLE
+        - GOLD
+        - SILVER
+        - MULTI
+        - OTHER
 
     GarmentPattern:
       type: string
       enum:
         - SOLID
         - STRIPED
-        - PLAID
+        - PLAID_CHECK
         - FLORAL
         - POLKA_DOT
-        - CHECKERED
         - CAMOUFLAGE
         - ANIMAL_PRINT
         - GRAPHIC_PRINT
         - COLOR_BLOCK
-        - TEXTURED
         - OTHER
-        - NOT_APPLICABLE
 
     Season:
       type: string
-      enum: [SPRING, SUMMER, FALL, WINTER, NOT_APPLICABLE]
+      enum: [SPRING, SUMMER, FALL, WINTER]
 
     Occasion:
       type: string
-      enum: [CASUAL, WORK, FORMAL, PARTY, ATHLETIC, LOUNGE, OUTDOOR, OTHER, NOT_APPLICABLE]
+      enum: [EVERYDAY, WORK, DATE, PARTY, ATHLETIC, LOUNGE, OUTDOOR, SPECIAL_EVENT]
 
     Fit:
       type: string
@@ -660,22 +1188,7 @@ components:
 
     Material:
       type: string
-      enum:
-        - COTTON
-        - DENIM
-        - WOOL
-        - POLYESTER
-        - LEATHER
-        - SILK
-        - LINEN
-        - CASHMERE
-        - NYLON
-        - SUEDE
-        - VELVET
-        - KNIT
-        - BLEND
-        - OTHER
-        - NOT_APPLICABLE
+      enum: [DENIM, LEATHER, KNIT, WOVEN, SHEER, OTHER, UNKNOWN]
 
     SleeveLength:
       type: string
@@ -683,15 +1196,46 @@ components:
 
     Neckline:
       type: string
-      enum: [CREW, V_NECK, SCOOP, TURTLENECK, COLLARED, HALTER, OFF_SHOULDER, OTHER, NOT_APPLICABLE]
+      enum:
+        - CREW
+        - V_NECK
+        - SCOOP
+        - BOAT
+        - SQUARE
+        - MOCK
+        - TURTLENECK
+        - COLLARED
+        - HALTER
+        - OFF_SHOULDER
+        - OTHER
+        - NOT_APPLICABLE
 
     GarmentLength:
       type: string
-      enum: [CROPPED, REGULAR, LONGLINE, MINI, MIDI, MAXI, OTHER, NOT_APPLICABLE]
+      enum: [CROPPED, REGULAR, LONGLINE, MINI, MIDI, MAXI, SHORT, LONG, OTHER, NOT_APPLICABLE]
+
+    LayerRole:
+      type: string
+      enum: [BASE, MID, OUTER, NOT_APPLICABLE]
 
     Warmth:
       type: string
-      enum: [LIGHT, MEDIUM, HEAVY, OTHER, NOT_APPLICABLE]
+      enum: [LIGHT, MEDIUM, HEAVY]
+
+    StyleTag:
+      type: string
+      enum:
+        - MINIMAL
+        - CLASSIC
+        - STREETWEAR
+        - SMART_CASUAL
+        - BOHO
+        - PREPPY
+        - SPORTY
+        - Y2K
+        - ROMANTIC
+        - WORKWEAR
+        - OTHER
 
     ErrorCode:
       type: string
@@ -702,10 +1246,11 @@ components:
         - UPLOAD_BATCH_NOT_FOUND
         - UPLOAD_ITEM_NOT_FOUND
         - GARMENT_EXTRACTION_NOT_FOUND
+        - GARMENT_NOT_FOUND
         - NO_ELIGIBLE_GARMENTS
+        - BUY_ADVICE_NOT_FOUND
         - UNSUPPORTED_IMAGE_FORMAT
-        - GEMINI_RESPONSE_PARSE_ERROR
-        - GEMINI_IMAGE_GENERATION_ERROR
         - QWEN_RESPONSE_PARSE_ERROR
+        - UNSUPPORTED_LANG
         - VALIDATION_FAILED
         - INTERNAL_ERROR

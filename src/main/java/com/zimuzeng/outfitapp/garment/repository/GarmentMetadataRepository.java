@@ -14,14 +14,15 @@ public interface GarmentMetadataRepository extends JpaRepository<GarmentMetadata
     Optional<GarmentMetadata> findByGarment(Garment garment);
 
     /**
-     * All garments belonging to a user that have completed metadata extraction, joined through
-     * {@code Garment -> UploadItem -> UploadBatch -> User} since {@link Garment} carries no
-     * {@code userId} of its own. Used as the candidate pool for outfit recommendation retrieval.
+     * All active garments belonging to a user that have completed metadata extraction, joined
+     * through {@code Garment -> UploadItem -> UploadBatch -> User} since {@link Garment} carries
+     * no {@code userId} of its own. Soft-deleted garments are excluded. Used as the candidate
+     * pool for outfit recommendation retrieval.
      */
     @Query("SELECT gm FROM GarmentMetadata gm "
             + "JOIN gm.garment g "
             + "JOIN g.uploadItem ui "
             + "JOIN ui.batch b "
-            + "WHERE b.user.id = :userId")
+            + "WHERE b.user.id = :userId AND g.deletedAt IS NULL")
     List<GarmentMetadata> findByUserId(@Param("userId") UUID userId);
 }

@@ -31,19 +31,22 @@ import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 /**
  * Structured fashion metadata that a {@code GarmentMetadataAnalyzer} implementation extracts for
- * a single {@link Garment} crop - category, colours, pattern, season/occasion fit, etc. One row
- * per {@code Garment}.
+ * a single {@link Garment} crop. One row per {@code Garment}.
+ *
+ * <p>Filterable dimensions use closed enums (group, category, colours, pattern, seasons,
+ * occasions, style tags, etc.). Empty {@code seasons} means all-season. Formality (1–5) owns
+ * dress-code intensity; occasions own context only.
+ *
+ * <p>Schema changes are not silently remapped from older free-text extractions — existing rows
+ * should be re-extracted (re-upload / re-run detection) after enum vocabulary changes.
  *
  * <p>Has no status/error/retry columns of its own: this row is created and populated in the same
  * pass (and same DB transaction) as its {@code Garment}, driven by
  * {@link GarmentDetectionService}, whose {@code GarmentExtraction#getStatus()} already tracks
- * whether the whole item (detection + cropping + metadata) succeeded. A row existing here is
- * itself the "metadata extraction succeeded for this garment" signal.
+ * whether the whole item (detection + cropping + metadata) succeeded.
  *
- * <p>{@code @OnDelete(CASCADE)} lets {@code GarmentRepository#deleteByUploadItem} (used by
- * {@link GarmentDetectionService} to clear out a prior failed attempt before retrying) cascade
- * to this table - and its {@code @ElementCollection} tables - at the DB level without any extra
- * application code.
+ * <p>{@code @OnDelete(CASCADE)} lets {@code GarmentRepository#deleteByUploadItem} cascade to this
+ * table and its {@code @ElementCollection} tables at the DB level.
  */
 @Entity
 @Table(name = "garment_metadata")
@@ -65,20 +68,23 @@ public class GarmentMetadata {
     private Garment garment;
 
     @Enumerated(EnumType.STRING)
+    @Column(name = "garment_group", nullable = false)
+    private GarmentGroup garmentGroup;
+
+    @Enumerated(EnumType.STRING)
     @Column(name = "category", nullable = false)
     private GarmentCategory category;
 
-    @Column(name = "subcategory")
-    private String subcategory;
-
+    @Enumerated(EnumType.STRING)
     @Column(name = "primary_colour", nullable = false)
-    private String primaryColour;
+    private Colour primaryColour;
 
     @ElementCollection
     @CollectionTable(name = "garment_metadata_secondary_colours", joinColumns = @JoinColumn(name = "garment_metadata_id"))
     @Column(name = "colour")
+    @Enumerated(EnumType.STRING)
     @Builder.Default
-    private List<String> secondaryColours = List.of();
+    private List<Colour> secondaryColours = List.of();
 
     @Enumerated(EnumType.STRING)
     @Column(name = "pattern", nullable = false)
@@ -123,6 +129,10 @@ public class GarmentMetadata {
     private GarmentLength length;
 
     @Enumerated(EnumType.STRING)
+    @Column(name = "layer_role", nullable = false)
+    private LayerRole layerRole;
+
+    @Enumerated(EnumType.STRING)
     @Column(name = "warmth", nullable = false)
     private Warmth warmth;
 
@@ -132,8 +142,16 @@ public class GarmentMetadata {
     @ElementCollection
     @CollectionTable(name = "garment_metadata_style_tags", joinColumns = @JoinColumn(name = "garment_metadata_id"))
     @Column(name = "style_tag")
+    @Enumerated(EnumType.STRING)
     @Builder.Default
-    private List<String> styleTags = List.of();
+    private List<StyleTag> styleTags = List.of();
+
+    /**
+     * Plain-language visual description of the garment; richer than structured fields alone.
+     * Nullable for rows extracted before this field existed.
+     */
+    @Column(name = "description", columnDefinition = "TEXT")
+    private String description;
 
     @Column(name = "ai_model")
     private String aiModel;

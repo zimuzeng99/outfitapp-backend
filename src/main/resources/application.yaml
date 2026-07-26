@@ -21,17 +21,7 @@ gcs:
     project-id: outfit-app-503420
     subscription-id: photo-uploaded-sub
 
-gemini:
-  api-key: ${GEMINI_API_KEY}
-  model: gemini-3.6-flash
-  image-model: gemini-3.1-flash-image
-
 qwen:
   api-key: ${QWEN_API_KEY}
   model: qwen3-vl-flash
   base-url: https://dashscope-intl.aliyuncs.com/compatible-mode/v1
-
-garment:
-  # Which LLM provider runs garment detection + metadata extraction (not the cutout image
-  # generation, which stays Gemini-only regardless of this setting). One of: gemini, qwen.
-  analysis-provider: qwen

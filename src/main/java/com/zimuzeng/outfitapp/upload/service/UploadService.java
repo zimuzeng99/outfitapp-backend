@@ -87,7 +87,7 @@ public class UploadService {
     public Optional<UploadItem> markItemUploaded(String objectKey) {
         UploadItem item = uploadItemRepository.findByObjectKey(objectKey).orElse(null);
         if (item == null) {
-            // Not logged: routinely hit for garment crop/cutout objects GarmentDetectionService
+            // Not logged: routinely hit for garment crop objects GarmentDetectionService
             // writes to the same bucket under a different key prefix - not an actual problem.
             return Optional.empty();
         }

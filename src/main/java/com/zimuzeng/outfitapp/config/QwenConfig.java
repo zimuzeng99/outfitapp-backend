@@ -7,9 +7,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * Wires up the Qwen client used as an alternative to Gemini (see {@link GeminiConfig}) for
- * garment detection/metadata extraction, when {@code garment.analysis-provider} is set to
- * {@code qwen}. Qwen is accessed via DashScope's OpenAI-compatible endpoint
+ * Wires up the Qwen client used for garment detection/metadata extraction, outfit
+ * recommendation, and buy-advice. Qwen is accessed via DashScope's OpenAI-compatible endpoint
  * ({@code qwen.base-url}) using the official OpenAI Java SDK, authenticated with an API key
  * ({@code qwen.api-key}, backed by the {@code QWEN_API_KEY} environment variable).
  */

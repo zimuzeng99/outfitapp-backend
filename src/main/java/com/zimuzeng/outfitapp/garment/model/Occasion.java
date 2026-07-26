@@ -1,17 +1,16 @@
 package com.zimuzeng.outfitapp.garment.model;
 
 /**
- * An occasion a garment is appropriate for. A single garment can be appropriate for multiple
- * occasions, see {@code GarmentMetadata#getOccasions()}.
+ * Context a garment suits. Dress-code intensity lives on {@code GarmentMetadata#getFormality()}
+ * (1–5), not here — do not encode casual/formal as occasions. Empty list means no occasion tags.
  */
 public enum Occasion {
-    CASUAL,
+    EVERYDAY,
     WORK,
-    FORMAL,
+    DATE,
     PARTY,
     ATHLETIC,
     LOUNGE,
     OUTDOOR,
-    OTHER,
-    NOT_APPLICABLE
+    SPECIAL_EVENT
 }

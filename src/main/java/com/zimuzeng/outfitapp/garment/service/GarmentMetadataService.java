@@ -10,9 +10,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Runs metadata extraction for a single {@link Garment} crop, using whichever
- * {@link GarmentMetadataAnalyzer} implementation is active (see
- * {@code garment.analysis-provider}), and persists the result as a {@link GarmentMetadata} row.
+ * Runs metadata extraction for a single {@link Garment} crop via {@link GarmentMetadataAnalyzer}
+ * and persists the result as a {@link GarmentMetadata} row.
  *
  * <p>Deliberately has no try/catch of its own: {@link GarmentDetectionService} calls this
  * synchronously, right after uploading and saving each garment crop, inside its own try/catch, so
@@ -33,8 +32,8 @@ public class GarmentMetadataService {
 
         garmentMetadataRepository.save(GarmentMetadata.builder()
                 .garment(garment)
+                .garmentGroup(extracted.garmentGroup())
                 .category(extracted.category())
-                .subcategory(extracted.subcategory())
                 .primaryColour(extracted.primaryColour())
                 .secondaryColours(extracted.secondaryColours())
                 .pattern(extracted.pattern())
@@ -46,13 +45,15 @@ public class GarmentMetadataService {
                 .sleeveLength(extracted.sleeveLength())
                 .neckline(extracted.neckline())
                 .length(extracted.length())
+                .layerRole(extracted.layerRole())
                 .warmth(extracted.warmth())
                 .formality(extracted.formality())
                 .styleTags(extracted.styleTags())
+                .description(extracted.description())
                 .aiModel(garmentMetadataAnalyzer.modelName())
                 .build());
 
-        log.info("Saved garment metadata for garment {} (category={}, subcategory=\"{}\")",
-                garment.getId(), extracted.category(), extracted.subcategory());
+        log.info("Saved garment metadata for garment {} (group={}, category={})",
+                garment.getId(), extracted.garmentGroup(), extracted.category());
     }
 }
