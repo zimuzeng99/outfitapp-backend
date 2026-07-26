@@ -2,9 +2,9 @@ spring:
   application:
     name: outfitapp
   datasource:
-    url: jdbc:postgresql://localhost:5432/outfitapp
-    username: postgres
-    password: password
+    url: jdbc:postgresql://${PGHOST:localhost}:${PGPORT:5432}/${PGDATABASE:outfitapp}
+    username: ${PGUSER:postgres}
+    password: ${PGPASSWORD:password}
   jpa:
     hibernate:
       ddl-auto: update
