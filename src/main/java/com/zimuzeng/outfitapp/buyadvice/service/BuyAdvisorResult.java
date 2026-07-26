@@ -5,7 +5,8 @@ import java.util.List;
 import java.util.UUID;
 
 public record BuyAdvisorResult(
-        int suggestedScore,
+        int outfitPotential,
+        int uniqueness,
         String rationale,
         int compatibleOutfitCountMin,
         int compatibleOutfitCountMax,

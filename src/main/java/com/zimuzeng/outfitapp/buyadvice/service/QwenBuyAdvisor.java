@@ -48,34 +48,36 @@ public class QwenBuyAdvisor implements BuyAdvisor {
                (may be empty) — ids included so you can cite them when relevant
             3) a JSON array of complementary wardrobe garments they already own
 
-            Decide how valuable this purchase would be. Score primarily on wardrobe
-            compatibility — the biggest factor by far:
-            - how many strong, realistic outfits it enables with what they own
-            - versatility across occasions, seasons, or formality
-            - how well it fits their existing style story and layers with owned pieces
+            Assess wardrobe value using two separate 0–100 JSON scores (never in user-facing
+            copy). The server combines them; you must score each factor honestly on its own:
 
-            Similar owned pieces are only a slight reduction in incremental value compared
-            with introducing something truly new. People often want duplicates (e.g. another
-            black tee). Never recommend skipping solely because similar items exist. Style
-            mismatch alone should not kill a purchase if the piece enables good outfits —
-            prefer a mid-range suggestedScore and explain the tradeoff in plain language.
+            1) outfitPotential (0–100) — primary factor: how many strong, realistic NEW outfits
+               the candidate enables with the complementary wardrobe. Consider versatility across
+               occasions, seasons, and formality, and how well it layers with owned pieces.
+               Many strong looks → high. Few/weak looks or empty complementary wardrobe → low.
+               More/stronger example outfits should push this score higher when the wardrobe
+               supports them.
 
-            Return a suggestedScore from 0 to 100 (higher = stronger buy) in the JSON number
-            field only — never in any user-facing string. Also write user-facing copy:
+            2) uniqueness (0–100) — incremental novelty vs similar owned pieces. Empty similar
+               list → high. One near-equivalent → mid/high. Several pieces that already serve
+               the same role in outfits → low. People often want duplicates; uniqueness may be
+               lower without forcing overall low wardrobe value when outfitPotential is strong.
+
+            Also write user-facing copy:
             - rationale: 2–4 short sentences (~40–70 words) in everyday shopping language.
-              Lead with the takeaway (worth buying / skip / consider), then why — especially
-              outfit potential with what they own — and a concrete downside/caveat when one
-              is supported by wardrobe fit or context. Mention owning something similar only
-              when that actually matters to the advice; otherwise do not dwell on it. Do not
-              invent a downside just to sound balanced. Same plain tone as outfit copy — no
-              fashion-ad or magazine fluff
+              Lead with the wardrobe-value takeaway in plain words (e.g. "strong add", "mixed
+              value", "limited wardrobe upside") — never the labels HIGH/MEDIUM/LOW — then why,
+              especially outfit potential with what they own, and a concrete downside/caveat
+              when one is supported by wardrobe fit or context. Mention owning something similar
+              only when that actually matters; otherwise do not dwell on it. Do not invent a
+              downside just to sound balanced. Same plain tone as outfit copy — no fashion-ad
+              or magazine fluff
             - potential outfits: 0 to 3 example outfits that INCLUDE the candidate plus wardrobe
               pieces. For each outfit, give a title and a brief rationale explaining why it works.
               Each outfit must use a unique wardrobeGarmentIds combination — do not repeat the
               exact same pieces with a different title or rationale. Prefer meaningfully
               different looks (different hero pieces, silhouettes, or occasions) when the
-              wardrobe supports them. More/stronger outfits should push the score higher when
-              the wardrobe supports them
+              wardrobe supports them
             - compatibleOutfitCountMin / compatibleOutfitCountMax: a rough range for how many
               strong, realistic outfits the candidate can form with the complementary wardrobe
               list (min ≤ max). This may be higher than the 0–3 examples shown. Prefer a modest
@@ -93,18 +95,18 @@ public class QwenBuyAdvisor implements BuyAdvisor {
             and never anything that could stand in for the candidate's role (same type of
             garment). If the wardrobe is empty or cannot support a real outfit with this
             candidate, return an empty potentialOutfits array, compatibleOutfitCountMin/Max 0,
-            and still score gap-fill / standalone value.
+            and still score outfitPotential / uniqueness for gap-fill or redundancy.
 
             User-facing copy rules for top-level rationale and every outfit title/rationale
             (strict — these strings are shown to end users as-is):
             - Never mention garment ids, UUIDs, or phrases like "(id: ...)" / "（id：...）" /
               "编号：..." / "ID为..." — refer to garments by colour, category, and style
               attributes instead (e.g. "the black knit dress")
-            - Never mention scores, ratings, percentages, 0–100 scales, suggestedScore,
-              internalScore, compatibleOutfitCountMin, compatibleOutfitCountMax, or numeric
-              confidence
+            - Never mention scores, ratings, percentages, 0–100 scales, outfitPotential,
+              uniqueness, internalScore, compatibleOutfitCountMin, compatibleOutfitCountMax,
+              or numeric confidence
             - Never mention internal field names (nearDuplicateCount, relevantSimilarGarmentIds,
-              formality, layerRole, styleTags, etc.), verdict codes (BUY/CONSIDER/SKIP as
+              formality, layerRole, styleTags, etc.), wardrobe-value codes (HIGH/MEDIUM/LOW as
               labels), or SCREAMING_SNAKE enum tokens (e.g. SMART_CASUAL, CREW_NECK).
               Translate into plain words ("smart casual", "crew neck", "you already own
               a very similar top")
@@ -114,7 +116,8 @@ public class QwenBuyAdvisor implements BuyAdvisor {
 
             Respond with ONLY a JSON object of this exact shape:
             {
-              "suggestedScore": <0-100 integer>,
+              "outfitPotential": <0-100 integer>,
+              "uniqueness": <0-100 integer>,
               "rationale": "<2-4 short plain-language sentences>",
               "compatibleOutfitCountMin": <non-negative integer>,
               "compatibleOutfitCountMax": <non-negative integer>,
@@ -216,7 +219,9 @@ public class QwenBuyAdvisor implements BuyAdvisor {
     private BuyAdvisorResult parse(String json, Set<UUID> wardrobeIds, Set<UUID> nearDuplicateIds) {
         try {
             RawResponse raw = OBJECT_MAPPER.readValue(json, RawResponse.class);
-            int score = raw.suggestedScore == null ? 50 : Math.max(0, Math.min(100, raw.suggestedScore));
+            int outfitPotential =
+                    raw.outfitPotential == null ? 50 : Math.max(0, Math.min(100, raw.outfitPotential));
+            int uniqueness = raw.uniqueness == null ? 50 : Math.max(0, Math.min(100, raw.uniqueness));
             List<BuyAdviceOutfitData> outfits = List.of();
             if (!wardrobeIds.isEmpty()) {
                 outfits = dedupeOutfits((raw.potentialOutfits() == null
@@ -246,7 +251,8 @@ public class QwenBuyAdvisor implements BuyAdvisor {
                             outfits.size());
 
             return new BuyAdvisorResult(
-                    score,
+                    outfitPotential,
+                    uniqueness,
                     sanitizeUserCopy("rationale", raw.rationale()),
                     range[0],
                     range[1],
@@ -406,7 +412,8 @@ public class QwenBuyAdvisor implements BuyAdvisor {
     }
 
     private record RawResponse(
-            Integer suggestedScore,
+            Integer outfitPotential,
+            Integer uniqueness,
             String rationale,
             Integer compatibleOutfitCountMin,
             Integer compatibleOutfitCountMax,

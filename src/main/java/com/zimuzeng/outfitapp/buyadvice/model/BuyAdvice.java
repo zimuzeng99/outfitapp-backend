@@ -93,8 +93,8 @@ public class BuyAdvice {
     private BuyAdviceCandidateMetadata candidateMetadata;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "verdict")
-    private BuyVerdict verdict;
+    @Column(name = "wardrobe_value")
+    private WardrobeValue wardrobeValue;
 
     /** Internal 0–100 score; never exposed on the API. */
     @Column(name = "internal_score")

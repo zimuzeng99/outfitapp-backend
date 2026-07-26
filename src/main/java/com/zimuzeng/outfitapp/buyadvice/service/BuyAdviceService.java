@@ -144,7 +144,7 @@ public class BuyAdviceService {
                 advice.getId(),
                 advice.getStatus(),
                 advice.getContext(),
-                advice.getVerdict(),
+                advice.getWardrobeValue(),
                 sanitizeCopy("rationale", advice.getRationale()),
                 candidate,
                 overlap,

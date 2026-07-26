@@ -1,7 +1,7 @@
 package com.zimuzeng.outfitapp.buyadvice.dto;
 
 import com.zimuzeng.outfitapp.buyadvice.model.BuyAdviceStatus;
-import com.zimuzeng.outfitapp.buyadvice.model.BuyVerdict;
+import com.zimuzeng.outfitapp.buyadvice.model.WardrobeValue;
 import java.util.List;
 import java.util.UUID;
 
@@ -9,7 +9,7 @@ public record BuyAdviceResponse(
         UUID adviceId,
         BuyAdviceStatus status,
         String context,
-        BuyVerdict verdict,
+        WardrobeValue wardrobeValue,
         String rationale,
         BuyAdviceCandidateResponse candidate,
         BuyAdviceOverlapResponse overlap,

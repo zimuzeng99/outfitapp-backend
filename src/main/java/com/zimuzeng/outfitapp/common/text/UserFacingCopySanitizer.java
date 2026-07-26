@@ -24,24 +24,26 @@ public final class UserFacingCopySanitizer {
             "(?i)(?:服装\\s*)?(?:编号|id)\\s*[:：=]\\s*[^\\s,.;:!?，。；：！？、）)]+"
                     + "|(?i)(?:服装\\s*)?(?:编号|id)\\s*[为是]\\s*[^\\s,.;:!?，。；：！？、）)]+");
     private static final Pattern SCORE_LEAK_PATTERN = Pattern.compile(
-            "(?i)\\b(suggested\\s*score|internal\\s*score|score|rating)\\s*[:=]?\\s*\\d{1,3}\\b"
+            "(?i)\\b(suggested\\s*score|internal\\s*score|outfit\\s*potential|uniqueness|score|rating)"
+                    + "\\s*[:=]?\\s*\\d{1,3}\\b"
                     + "|\\b\\d{1,3}\\s*/\\s*100\\b"
                     + "|\\b\\d{1,3}\\s*%\\b"
                     + "|\\b\\d{1,3}\\s*(percent|out\\s+of\\s+100)\\b"
-                    + "|\\b(suggestedScore|internalScore)\\b"
+                    + "|\\b(suggestedScore|internalScore|outfitPotential|uniqueness)\\b"
                     + "|(评分|分数|得分)\\s*[为是：:=]?\\s*\\d{1,3}");
     /** Schema / camelCase identifiers that should never appear in user copy. */
     private static final Pattern INTERNAL_IDENTIFIER_PATTERN = Pattern.compile(
             "(?i)\\b("
-                    + "suggestedScore|internalScore|sameCategoryCount|sameGroupCount|nearDuplicates|"
+                    + "suggestedScore|internalScore|outfitPotential|uniqueness|wardrobeValue|"
+                    + "sameCategoryCount|sameGroupCount|nearDuplicates|"
                     + "nearDuplicateCount|nearDuplicateIds|relevantSimilarGarmentIds|"
                     + "wardrobeGarmentIds|garmentIds|garmentGroup|"
                     + "primaryColour|secondaryColours|styleTags|layerRole|sleeveLength|potentialOutfits"
                     + ")\\b");
-    /** Labeled internal assignments such as "formality: 3" or "verdict: BUY". */
+    /** Labeled internal assignments such as "formality: 3" or "wardrobeValue: HIGH". */
     private static final Pattern INTERNAL_ASSIGNMENT_PATTERN = Pattern.compile(
-            "(?i)\\b(formality|verdict|warmth|category|layerRole|styleTags|garmentGroup)\\s*[:=]\\s*"
-                    + "[^,;.。；，\\s]+");
+            "(?i)\\b(formality|verdict|wardrobeValue|warmth|category|layerRole|styleTags|garmentGroup)"
+                    + "\\s*[:=]\\s*[^,;.。；，\\s]+");
     /** SCREAMING_SNAKE enum tokens (e.g. SMART_CASUAL); leaves plain words like "casual" alone. */
     private static final Pattern ENUM_TOKEN_PATTERN = Pattern.compile(
             "\\b[A-Z]{2,}(?:_[A-Z0-9]+)+\\b");

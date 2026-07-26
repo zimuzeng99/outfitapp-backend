@@ -21,7 +21,7 @@ info:
         to request another batch.
     11. `POST /api/users/{userId}/buy-advice` — create a buy-advice job (signed PUT URL for a shopping-photo candidate).
     12. Client uploads the candidate photo with `PUT` to `uploadUrl`, then polls
-        `GET /api/users/{userId}/buy-advice/{adviceId}` for BUY / CONSIDER / SKIP.
+        `GET /api/users/{userId}/buy-advice/{adviceId}` for wardrobe value HIGH / MEDIUM / LOW.
 
     **Auth:** none configured today — all endpoints are open.
     **Errors:** JSON body `{ "code": "<ErrorCode>", "message": "..." }` (see `ErrorResponse`).
@@ -496,7 +496,7 @@ paths:
       operationId: getBuyAdvice
       summary: Poll buy-advice status and result
       description: |
-        Returns job status. When `COMPLETED`, includes `verdict` (`BUY` / `CONSIDER` / `SKIP`),
+        Returns job status. When `COMPLETED`, includes `wardrobeValue` (`HIGH` / `MEDIUM` / `LOW`),
         a short plain-language rationale, candidate metadata, optional similar owned pieces
         (only when material to the rationale), a rough estimated range
         (`compatibleOutfitCountMin`–`compatibleOutfitCountMax`) of wardrobe looks the candidate
@@ -1017,17 +1017,21 @@ components:
         context:
           type: string
           nullable: true
-        verdict:
+        wardrobeValue:
           allOf:
-            - $ref: "#/components/schemas/BuyVerdict"
+            - $ref: "#/components/schemas/WardrobeValue"
           nullable: true
+          description: >
+            How valuable the candidate is for the user's wardrobe (HIGH / MEDIUM / LOW), based
+            mainly on new outfit potential with a smaller uniqueness factor vs similar owned
+            pieces. Null before completion.
         rationale:
           type: string
           nullable: true
           description: >
-            2–4 short everyday sentences that lead with the takeaway then explain why to buy,
-            skip, or consider, including a caveat when one is grounded in the wardrobe/context;
-            no garment ids, UUIDs, or internal scores
+            2–4 short everyday sentences that lead with the wardrobe-value takeaway then explain
+            why, including a caveat when one is grounded in the wardrobe/context; no garment ids,
+            UUIDs, or internal scores
         candidate:
           allOf:
             - $ref: "#/components/schemas/BuyAdviceCandidateResponse"
@@ -1087,9 +1091,13 @@ components:
       type: string
       enum: [PENDING, UPLOADED, PROCESSING, COMPLETED, FAILED]
 
-    BuyVerdict:
+    WardrobeValue:
       type: string
-      enum: [BUY, CONSIDER, SKIP]
+      enum: [HIGH, MEDIUM, LOW]
+      description: >
+        Wardrobe value of a shopping candidate: HIGH = strong new outfit potential with limited
+        redundancy; MEDIUM = some outfit upside and/or some similar owned pieces; LOW = limited
+        new outfits and/or many equivalent items already owned.
 
     GarmentGroup:
       type: string

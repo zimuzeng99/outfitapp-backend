@@ -10,13 +10,15 @@ class UserFacingCopySanitizerTest {
     @Test
     void stripsScoresIdsAndInternalTokens() {
         String input = "Good buy (id: abc). score: 82 / 100. "
-                + "suggestedScore formality: 3 SMART_CASUAL crew neck. "
-                + "sameCategoryCount: 4 nearDuplicates.";
+                + "outfitPotential uniqueness formality: 3 SMART_CASUAL crew neck. "
+                + "sameCategoryCount: 4 nearDuplicates wardrobeValue: HIGH.";
 
         String sanitized = UserFacingCopySanitizer.sanitize("rationale", input);
 
         assertFalse(sanitized.matches("(?i).*\\bscore\\b.*\\d.*"));
-        assertFalse(sanitized.contains("suggestedScore"));
+        assertFalse(sanitized.contains("outfitPotential"));
+        assertFalse(sanitized.contains("uniqueness"));
+        assertFalse(sanitized.contains("wardrobeValue"));
         assertFalse(sanitized.contains("SMART_CASUAL"));
         assertFalse(sanitized.contains("sameCategoryCount"));
         assertFalse(sanitized.contains("formality"));

@@ -9,7 +9,7 @@ import com.zimuzeng.outfitapp.buyadvice.model.BuyAdviceOverlapData;
 import com.zimuzeng.outfitapp.buyadvice.model.BuyAdviceStatus;
 import com.zimuzeng.outfitapp.buyadvice.repository.BuyAdviceRepository;
 import com.zimuzeng.outfitapp.buyadvice.service.BuyAdviceOverlapAnalyzer.OverlapResult;
-import com.zimuzeng.outfitapp.buyadvice.service.BuyAdviceVerdictMapper.MappedVerdict;
+import com.zimuzeng.outfitapp.buyadvice.service.BuyAdviceWardrobeValueMapper.MappedWardrobeValue;
 import com.zimuzeng.outfitapp.common.image.ImageCropper;
 import com.zimuzeng.outfitapp.config.GcsProperties;
 import com.zimuzeng.outfitapp.garment.GarmentLabelLocale;
@@ -32,7 +32,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Async pipeline for a buy-advice job: detect → crop → metadata → wardrobe overlap/RAG → LLM
- * verdict. Candidate data is stored only on {@link BuyAdvice}, never as wardrobe garments.
+ * wardrobe-value scoring. Candidate data is stored only on {@link BuyAdvice}, never as wardrobe
+ * garments.
  */
 @Service
 @RequiredArgsConstructor
@@ -52,7 +53,7 @@ public class BuyAdviceProcessingService {
     private final BuyAdviceOverlapAnalyzer overlapAnalyzer;
     private final BuyAdviceComplementSelector complementSelector;
     private final BuyAdvisor buyAdvisor;
-    private final BuyAdviceVerdictMapper verdictMapper;
+    private final BuyAdviceWardrobeValueMapper wardrobeValueMapper;
 
     @Transactional
     public void process(BuyAdvice detached) {
@@ -128,10 +129,11 @@ public class BuyAdviceProcessingService {
                     complements,
                     chinese);
 
-            MappedVerdict mapped = verdictMapper.map(advisorResult.suggestedScore(), analyzerNearDupCount);
+            MappedWardrobeValue mapped = wardrobeValueMapper.map(
+                    advisorResult.outfitPotential(), advisorResult.uniqueness());
             advice.setOverlap(new BuyAdviceOverlapData(advisorResult.relevantSimilarGarmentIds()));
             advice.setInternalScore(mapped.internalScore());
-            advice.setVerdict(mapped.verdict());
+            advice.setWardrobeValue(mapped.wardrobeValue());
             advice.setRationale(advisorResult.rationale());
             advice.setCompatibleOutfitCountMin(advisorResult.compatibleOutfitCountMin());
             advice.setCompatibleOutfitCountMax(advisorResult.compatibleOutfitCountMax());
@@ -142,9 +144,9 @@ public class BuyAdviceProcessingService {
             buyAdviceRepository.save(advice);
 
             log.info(
-                    "Buy-advice {} completed with verdict={} internalScore={}",
+                    "Buy-advice {} completed with wardrobeValue={} internalScore={}",
                     advice.getId(),
-                    mapped.verdict(),
+                    mapped.wardrobeValue(),
                     mapped.internalScore());
         } catch (RuntimeException ex) {
             advice.setStatus(BuyAdviceStatus.FAILED);
