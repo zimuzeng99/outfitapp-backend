@@ -34,8 +34,9 @@ import org.springframework.data.jpa.domain.support.AuditingEntityListener;
  * a single {@link Garment} crop. One row per {@code Garment}.
  *
  * <p>Filterable dimensions use closed enums (group, category, colours, pattern, seasons,
- * occasions, style tags, etc.). Empty {@code seasons} means all-season. Formality (1–5) owns
- * dress-code intensity; occasions own context only.
+ * occasions, style tags, etc.). Empty {@code seasons} means all-season; empty {@code occasions}
+ * means all-occasion for retrieval matching. Formality (1–5) owns dress-code intensity;
+ * occasions own context only.
  *
  * <p>Schema changes are not silently remapped from older free-text extractions — existing rows
  * should be re-extracted (re-upload / re-run detection) after enum vocabulary changes.

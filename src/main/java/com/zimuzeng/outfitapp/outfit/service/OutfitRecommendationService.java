@@ -39,6 +39,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class OutfitRecommendationService {
 
     private static final int MAX_OUTFITS_PER_BATCH = 5;
+    private static final int MIN_CANDIDATE_POOL = 8;
 
     private final UserRepository userRepository;
     private final GarmentMetadataRepository garmentMetadataRepository;
@@ -61,26 +62,25 @@ public class OutfitRecommendationService {
         }
 
         RetrievalCriteria criteria = criteriaExtractor.extract(request.context());
-        List<GarmentMetadata> filtered = wardrobeCandidateFilter.filter(candidates, criteria);
-        List<GarmentMetadata> withDescriptions = filtered.stream()
-                .filter(gm -> gm.getDescription() != null && !gm.getDescription().isBlank())
-                .toList();
+        WardrobeCandidateFilter.RelaxedFilterResult relaxed =
+                wardrobeCandidateFilter.filterWithRelaxation(candidates, criteria, MIN_CANDIDATE_POOL);
+        List<GarmentMetadata> filtered = relaxed.candidates();
         log.info(
                 "Outfit recommendation for user {}: {} wardrobe garment(s) narrowed to {} candidate(s) "
-                        + "({} with descriptions; interpretation=\"{}\", lang={})",
+                        + "(relaxed={}; interpretation=\"{}\", lang={})",
                 userId,
                 candidates.size(),
                 filtered.size(),
-                withDescriptions.size(),
+                relaxed.relaxedDimensions(),
                 criteria.interpretation(),
                 lang);
 
-        if (withDescriptions.isEmpty()) {
+        if (filtered.isEmpty()) {
             return new OutfitRecommendationResponse(request.context(), List.of(), false);
         }
 
         List<RecommendedOutfit> fetched = outfitRecommender.recommend(
-                request.context(), withDescriptions, request.excludeOutfits(), preferChinese);
+                request.context(), filtered, request.excludeOutfits(), preferChinese);
 
         // Page-size+1: a surplus outfit means more good looks existed than we return.
         boolean hasMore = fetched.size() > MAX_OUTFITS_PER_BATCH;
@@ -89,7 +89,7 @@ public class OutfitRecommendationService {
                 : fetched;
 
         Map<UUID, GarmentMetadata> byGarmentId =
-                withDescriptions.stream().collect(Collectors.toMap(gm -> gm.getGarment().getId(), gm -> gm));
+                filtered.stream().collect(Collectors.toMap(gm -> gm.getGarment().getId(), gm -> gm));
 
         List<RecommendedOutfitResponse> outfitResponses =
                 outfits.stream().map(outfit -> toResponse(outfit, byGarmentId, preferChinese)).toList();

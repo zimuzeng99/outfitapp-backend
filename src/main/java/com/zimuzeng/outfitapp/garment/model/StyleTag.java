@@ -1,8 +1,8 @@
 package com.zimuzeng.outfitapp.garment.model;
 
 /**
- * Controlled aesthetic/style labels. A garment may have up to a few tags; finer vibe language
- * belongs in the free-text description.
+ * Controlled aesthetic/style labels. A garment may have any number of fitting tags from this
+ * closed list (no hard cap); finer vibe language belongs in the free-text description.
  */
 public enum StyleTag {
     MINIMAL,

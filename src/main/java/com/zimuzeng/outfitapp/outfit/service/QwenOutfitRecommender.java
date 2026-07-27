@@ -18,6 +18,7 @@ import com.zimuzeng.outfitapp.outfit.model.RecommendedOutfit;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
@@ -254,7 +255,33 @@ public class QwenOutfitRecommender implements OutfitRecommender {
         static CandidateGarmentView fromEntity(GarmentMetadata metadata) {
             return new CandidateGarmentView(
                     metadata.getGarment().getId().toString(),
-                    metadata.getDescription());
+                    effectiveDescription(metadata));
+        }
+
+        /**
+         * Prefer the stored natural-language description; when missing (legacy rows), synthesize
+         * a short label from structured metadata so the garment stays eligible for composition.
+         */
+        private static String effectiveDescription(GarmentMetadata metadata) {
+            String description = metadata.getDescription();
+            if (description != null && !description.isBlank()) {
+                return description;
+            }
+            String colour = enumLabel(metadata.getPrimaryColour());
+            String category = enumLabel(metadata.getCategory());
+            String group = enumLabel(metadata.getGarmentGroup());
+            String base = (colour + " " + category).trim();
+            if (base.isBlank()) {
+                return group.isBlank() ? "wardrobe garment" : group;
+            }
+            return group.isBlank() ? base : base + " (" + group + ")";
+        }
+
+        private static String enumLabel(Enum<?> value) {
+            if (value == null) {
+                return "";
+            }
+            return value.name().toLowerCase(Locale.ROOT).replace('_', ' ');
         }
     }
 

@@ -62,8 +62,6 @@ public class QwenGarmentMetadataAnalyzer implements GarmentMetadataAnalyzer {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper()
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
-    private static final int MAX_STYLE_TAGS = 3;
-
     private static final String SYSTEM_INSTRUCTION = (
             """
             You are a fashion assistant analyzing a cropped photo of a single garment. An
@@ -82,10 +80,17 @@ public class QwenGarmentMetadataAnalyzer implements GarmentMetadataAnalyzer {
               correct garmentGroup when the slot is clear but the exact type is not. Use
               OTHER_ACCESSORY only for accessories.
             - Colours must be from the controlled colour list (map "navy blue" -> NAVY, etc.).
-              Only report secondaryColours clearly present in addition to primaryColour.
+              For secondaryColours, include every secondary colour that is visibly present as
+              more than noise (trim, pattern accents, contrast panels). Do not repeat
+              primaryColour in secondaryColours. Prefer including borderline accents over
+              omitting them.
             - Occasions are contexts (EVERYDAY, WORK, DATE, ...) - never encode casual/formal
               as occasions; that belongs in formality (1 = very casual, 5 = very formal).
-            - seasons: list applicable seasons, or leave empty for year-round / all-season.
+              Include every context the garment could plausibly suit from the closed list;
+              prefer recall over a single "best" occasion.
+            - seasons: leave empty for true year-round / all-season garments. When not
+              year-round, list every season the item reasonably suits, not just the
+              strongest one; prefer over-including borderline seasons over omitting them.
             - warmth: LIGHT, MEDIUM, or HEAVY (use MEDIUM if unsure). Always set for clothing
               and footwear.
             - material: only visually obvious classes (DENIM, LEATHER, KNIT, WOVEN, SHEER);
@@ -98,7 +103,8 @@ public class QwenGarmentMetadataAnalyzer implements GarmentMetadataAnalyzer {
               pieces; otherwise NOT_APPLICABLE is fine.
             - sleeveLength / neckline / fit: use NOT_APPLICABLE when the attribute does not
               apply to this kind of item.
-            - styleTags: at most 3 labels from the closed list; empty list if none fit.
+            - styleTags: include all closed-list tags that reasonably fit; empty only when
+              none apply. Prefer inclusive tagging over picking a single vibe.
 
             Also write a "description" about the labeled garment only.
             """
@@ -111,10 +117,10 @@ public class QwenGarmentMetadataAnalyzer implements GarmentMetadataAnalyzer {
               "garmentGroup": one of %s,
               "category": one of %s,
               "primaryColour": one of %s,
-              "secondaryColours": [zero or more of %s],
+              "secondaryColours": [include all that apply from %s],
               "pattern": one of %s,
-              "seasons": [zero or more of %s],
-              "occasions": [zero or more of %s],
+              "seasons": [include all that apply from %s; empty if year-round],
+              "occasions": [include all that apply from %s],
               "fit": one of %s,
               "silhouette": one of %s,
               "material": one of %s,
@@ -124,7 +130,7 @@ public class QwenGarmentMetadataAnalyzer implements GarmentMetadataAnalyzer {
               "layerRole": one of %s,
               "warmth": one of %s,
               "formality": <integer from 1 to 5>,
-              "styleTags": [zero or more of %s],
+              "styleTags": [include all that apply from %s],
               "description": "<plain English description>"
             }
             """)
@@ -203,10 +209,6 @@ public class QwenGarmentMetadataAnalyzer implements GarmentMetadataAnalyzer {
     }
 
     private ExtractedGarmentMetadata toExtractedMetadata(RawMetadata raw) {
-        List<StyleTag> styleTags = parseEnumList(StyleTag.class, raw.styleTags());
-        if (styleTags.size() > MAX_STYLE_TAGS) {
-            styleTags = styleTags.subList(0, MAX_STYLE_TAGS);
-        }
         return new ExtractedGarmentMetadata(
                 parseEnum(GarmentGroup.class, raw.garmentGroup(), GarmentGroup.TOP),
                 parseEnum(GarmentCategory.class, raw.category(), GarmentCategory.OTHER),
@@ -224,7 +226,7 @@ public class QwenGarmentMetadataAnalyzer implements GarmentMetadataAnalyzer {
                 parseEnum(LayerRole.class, raw.layerRole(), LayerRole.NOT_APPLICABLE),
                 parseEnum(Warmth.class, raw.warmth(), Warmth.MEDIUM),
                 clampFormality(raw.formality()),
-                styleTags,
+                parseEnumList(StyleTag.class, raw.styleTags()),
                 blankToEmpty(raw.description()));
     }
 

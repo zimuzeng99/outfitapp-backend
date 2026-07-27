@@ -12,11 +12,14 @@ import org.springframework.stereotype.Component;
  *
  * <p>Hard constraint: only complementary garment groups from {@link RetrievalCriteria} (never the
  * candidate's own group / near-duplicate stand-ins). Soft dims (formality, style, etc.) narrow
- * that set; if they match nothing, fall back to the hard set — never the full wardrobe.
+ * that set via softened matching and progressive relaxation; if that still yields nothing, fall
+ * back to the hard set — never the full wardrobe.
  */
 @Component
 @RequiredArgsConstructor
 public class BuyAdviceComplementSelector {
+
+    private static final int MIN_COMPLEMENT_POOL = 4;
 
     private final WardrobeCandidateFilter wardrobeCandidateFilter;
 
@@ -33,7 +36,9 @@ public class BuyAdviceComplementSelector {
             return List.of();
         }
 
-        List<GarmentMetadata> soft = wardrobeCandidateFilter.filterStrict(hard, criteria);
+        List<GarmentMetadata> soft = wardrobeCandidateFilter
+                .filterWithRelaxation(hard, criteria, MIN_COMPLEMENT_POOL)
+                .candidates();
         return soft.isEmpty() ? hard : soft;
     }
 }
