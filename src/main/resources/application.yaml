@@ -25,5 +25,5 @@ gcs:
 
 qwen:
   api-key: ${QWEN_API_KEY}
-  model: qwen3-vl-flash
+  model: qwen3.6-flash
   base-url: https://dashscope-intl.aliyuncs.com/compatible-mode/v1
