@@ -6,6 +6,10 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public record GcsProperties(
         String bucket, int signedUrlExpiryMinutes, String serviceAccountJson, Pubsub pubsub) {
 
-    public record Pubsub(String projectId, String subscriptionId) {
+    public record Pubsub(
+            String projectId,
+            String subscriptionId,
+            int parallelPullCount,
+            int maxOutstandingElementCount) {
     }
 }

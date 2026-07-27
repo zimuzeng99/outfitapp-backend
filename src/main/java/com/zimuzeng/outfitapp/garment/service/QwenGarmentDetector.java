@@ -14,6 +14,7 @@ import com.openai.models.chat.completions.ChatCompletionCreateParams;
 import com.zimuzeng.outfitapp.common.exception.AppException;
 import com.zimuzeng.outfitapp.common.exception.ErrorCode;
 import com.zimuzeng.outfitapp.config.QwenProperties;
+import com.zimuzeng.outfitapp.config.QwenRequestOptions;
 import com.zimuzeng.outfitapp.garment.model.DetectedGarment;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -152,11 +153,12 @@ public class QwenGarmentDetector implements GarmentDetector {
         String systemInstruction = systemInstruction(effectiveMode);
         String prompt = prompt(effectiveMode);
 
-        ChatCompletionCreateParams params = ChatCompletionCreateParams.builder()
-                .model(qwenProperties.model())
-                .addSystemMessage(systemInstruction)
-                .addUserMessageOfArrayOfContentParts(List.of(imagePart(imageBytes, contentType), textPart(prompt)))
-                .responseFormat(ResponseFormatJsonObject.builder().build())
+        ChatCompletionCreateParams params = QwenRequestOptions.withoutThinking(ChatCompletionCreateParams.builder()
+                        .model(qwenProperties.model())
+                        .addSystemMessage(systemInstruction)
+                        .addUserMessageOfArrayOfContentParts(
+                                List.of(imagePart(imageBytes, contentType), textPart(prompt)))
+                        .responseFormat(ResponseFormatJsonObject.builder().build()))
                 .build();
 
         long startedAt = System.currentTimeMillis();
@@ -289,14 +291,14 @@ public class QwenGarmentDetector implements GarmentDetector {
      * invocation; if the repaired response is still unusable, {@link #parse} gives up and throws.
      */
     private String repair(String badJson, DetectionMode mode) {
-        ChatCompletionCreateParams params = ChatCompletionCreateParams.builder()
-                .model(qwenProperties.model())
-                .addSystemMessage(systemInstruction(mode))
-                .addUserMessage("Your previous response was not valid for the required JSON shape. Here is what "
-                        + "you returned:\n" + badJson
-                        + "\n\nReturn ONLY a corrected JSON object of the exact required shape described above, "
-                        + "and nothing else.")
-                .responseFormat(ResponseFormatJsonObject.builder().build())
+        ChatCompletionCreateParams params = QwenRequestOptions.withoutThinking(ChatCompletionCreateParams.builder()
+                        .model(qwenProperties.model())
+                        .addSystemMessage(systemInstruction(mode))
+                        .addUserMessage("Your previous response was not valid for the required JSON shape. Here is what "
+                                + "you returned:\n" + badJson
+                                + "\n\nReturn ONLY a corrected JSON object of the exact required shape described above, "
+                                + "and nothing else.")
+                        .responseFormat(ResponseFormatJsonObject.builder().build()))
                 .build();
 
         long startedAt = System.currentTimeMillis();

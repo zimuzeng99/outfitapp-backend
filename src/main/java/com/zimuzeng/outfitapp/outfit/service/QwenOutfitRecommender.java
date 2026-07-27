@@ -12,6 +12,7 @@ import com.zimuzeng.outfitapp.common.exception.ErrorCode;
 import com.zimuzeng.outfitapp.common.text.UserFacingCopySanitizer;
 import com.zimuzeng.outfitapp.common.text.UserFacingCopyStyle;
 import com.zimuzeng.outfitapp.config.QwenProperties;
+import com.zimuzeng.outfitapp.config.QwenRequestOptions;
 import com.zimuzeng.outfitapp.garment.model.GarmentMetadata;
 import com.zimuzeng.outfitapp.outfit.model.RecommendedOutfit;
 import java.util.ArrayList;
@@ -140,11 +141,13 @@ public class QwenOutfitRecommender implements OutfitRecommender {
         }
 
         String systemInstruction = chinese ? SYSTEM_INSTRUCTION + CHINESE_COPY_INSTRUCTION : SYSTEM_INSTRUCTION;
-        ChatCompletionCreateParams params = ChatCompletionCreateParams.builder()
-                .model(qwenProperties.model())
-                .addSystemMessage(systemInstruction)
-                .addUserMessage(userMessage)
-                .responseFormat(ResponseFormatJsonObject.builder().build())
+        ChatCompletionCreateParams params = QwenRequestOptions.withThinkingBudget(
+                        ChatCompletionCreateParams.builder()
+                                .model(qwenProperties.model())
+                                .addSystemMessage(systemInstruction)
+                                .addUserMessage(userMessage)
+                                .responseFormat(ResponseFormatJsonObject.builder().build()),
+                        qwenProperties.adviceThinkingBudget())
                 .build();
 
         long startedAt = System.currentTimeMillis();

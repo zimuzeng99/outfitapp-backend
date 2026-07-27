@@ -1,5 +1,6 @@
 package com.zimuzeng.outfitapp.upload.service;
 
+import com.google.api.gax.batching.FlowControlSettings;
 import com.google.api.gax.core.FixedCredentialsProvider;
 import com.google.auth.oauth2.GoogleCredentials;
 import com.google.cloud.pubsub.v1.AckReplyConsumer;
@@ -30,9 +31,11 @@ import org.springframework.stereotype.Component;
  * See {@link com.zimuzeng.outfitapp.config.GcsConfig} for the one-time infra setup required for
  * GCS to publish these notifications.
  *
- * <p>The whole handler runs synchronously before acking, so if the process crashes mid-
- * processing, the message is never acked and Pub/Sub redelivers it. On failure the message is
- * always nacked (never swallowed). The subscription's dead-letter policy (see
+ * <p>Concurrency is capped by {@code gcs.pubsub.max-outstanding-element-count} (how many
+ * handlers may run at once on this JVM) and {@code gcs.pubsub.parallel-pull-count}. Each
+ * handler still runs synchronously before acking, so if the process crashes mid-processing,
+ * the message is never acked and Pub/Sub redelivers it. On failure the message is always
+ * nacked (never swallowed). The subscription's dead-letter policy (see
  * {@link com.zimuzeng.outfitapp.config.GcsConfig}) is the single retry cap: after 5 failed
  * delivery attempts, Pub/Sub stops redelivering and routes the message to a DLQ topic instead.
  */
@@ -63,11 +66,23 @@ public class UploadNotificationListener {
         ProjectSubscriptionName subscriptionName = ProjectSubscriptionName.of(
                 gcsProperties.pubsub().projectId(), gcsProperties.pubsub().subscriptionId());
 
+        int parallelPullCount = gcsProperties.pubsub().parallelPullCount();
+        int maxOutstanding = gcsProperties.pubsub().maxOutstandingElementCount();
+        FlowControlSettings flowControlSettings = FlowControlSettings.newBuilder()
+                .setMaxOutstandingElementCount((long) maxOutstanding)
+                .build();
+
         subscriber = Subscriber.newBuilder(subscriptionName, this::handleMessage)
                 .setCredentialsProvider(FixedCredentialsProvider.create(googleCredentials))
+                .setParallelPullCount(parallelPullCount)
+                .setFlowControlSettings(flowControlSettings)
                 .build();
         subscriber.startAsync().awaitRunning();
-        log.info("Listening for GCS upload notifications on subscription {}", subscriptionName);
+        log.info(
+                "Listening for GCS upload notifications on subscription {} (parallelPullCount={}, maxOutstanding={})",
+                subscriptionName,
+                parallelPullCount,
+                maxOutstanding);
     }
 
     private void handleMessage(PubsubMessage message, AckReplyConsumer consumer) {

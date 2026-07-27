@@ -14,6 +14,7 @@ import com.zimuzeng.outfitapp.common.exception.AppException;
 import com.zimuzeng.outfitapp.common.exception.ErrorCode;
 import com.zimuzeng.outfitapp.common.text.UserFacingCopyStyle;
 import com.zimuzeng.outfitapp.config.QwenProperties;
+import com.zimuzeng.outfitapp.config.QwenRequestOptions;
 import com.zimuzeng.outfitapp.garment.model.Colour;
 import com.zimuzeng.outfitapp.garment.model.ExtractedGarmentMetadata;
 import com.zimuzeng.outfitapp.garment.model.Fit;
@@ -159,12 +160,12 @@ public class QwenGarmentMetadataAnalyzer implements GarmentMetadataAnalyzer {
 
     @Override
     public ExtractedGarmentMetadata analyze(byte[] cropBytes, String contentType, String label) {
-        ChatCompletionCreateParams params = ChatCompletionCreateParams.builder()
-                .model(qwenProperties.model())
-                .addSystemMessage(SYSTEM_INSTRUCTION)
-                .addUserMessageOfArrayOfContentParts(List.of(
-                        imagePart(cropBytes, contentType), textPart(PROMPT_TEMPLATE.formatted(label))))
-                .responseFormat(ResponseFormatJsonObject.builder().build())
+        ChatCompletionCreateParams params = QwenRequestOptions.withoutThinking(ChatCompletionCreateParams.builder()
+                        .model(qwenProperties.model())
+                        .addSystemMessage(SYSTEM_INSTRUCTION)
+                        .addUserMessageOfArrayOfContentParts(List.of(
+                                imagePart(cropBytes, contentType), textPart(PROMPT_TEMPLATE.formatted(label))))
+                        .responseFormat(ResponseFormatJsonObject.builder().build()))
                 .build();
 
         long startedAt = System.currentTimeMillis();

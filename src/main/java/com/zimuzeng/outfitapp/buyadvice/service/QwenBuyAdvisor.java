@@ -13,6 +13,7 @@ import com.zimuzeng.outfitapp.common.exception.ErrorCode;
 import com.zimuzeng.outfitapp.common.text.UserFacingCopySanitizer;
 import com.zimuzeng.outfitapp.common.text.UserFacingCopyStyle;
 import com.zimuzeng.outfitapp.config.QwenProperties;
+import com.zimuzeng.outfitapp.config.QwenRequestOptions;
 import com.zimuzeng.outfitapp.garment.model.ExtractedGarmentMetadata;
 import com.zimuzeng.outfitapp.garment.model.GarmentMetadata;
 import java.util.ArrayList;
@@ -179,16 +180,20 @@ public class QwenBuyAdvisor implements BuyAdvisor {
         String systemInstruction = chinese ? SYSTEM_INSTRUCTION + CHINESE_COPY_INSTRUCTION : SYSTEM_INSTRUCTION;
         String contextText = (context == null || context.isBlank()) ? "(none)" : context.trim();
 
-        ChatCompletionCreateParams params = ChatCompletionCreateParams.builder()
-                .model(qwenProperties.model())
-                .addSystemMessage(systemInstruction)
-                .addUserMessage(PROMPT_TEMPLATE.formatted(
-                        contextText,
-                        candidateLabel,
-                        toJson(CandidateView.fromExtracted(candidate)),
-                        toJson(nearDuplicates.stream().map(WardrobeView::fromEntity).toList()),
-                        toJson(wardrobeCandidates.stream().map(WardrobeView::fromEntity).toList())))
-                .responseFormat(ResponseFormatJsonObject.builder().build())
+        ChatCompletionCreateParams params = QwenRequestOptions.withThinkingBudget(
+                        ChatCompletionCreateParams.builder()
+                                .model(qwenProperties.model())
+                                .addSystemMessage(systemInstruction)
+                                .addUserMessage(PROMPT_TEMPLATE.formatted(
+                                        contextText,
+                                        candidateLabel,
+                                        toJson(CandidateView.fromExtracted(candidate)),
+                                        toJson(nearDuplicates.stream().map(WardrobeView::fromEntity).toList()),
+                                        toJson(wardrobeCandidates.stream()
+                                                .map(WardrobeView::fromEntity)
+                                                .toList())))
+                                .responseFormat(ResponseFormatJsonObject.builder().build()),
+                        qwenProperties.adviceThinkingBudget())
                 .build();
 
         long startedAt = System.currentTimeMillis();

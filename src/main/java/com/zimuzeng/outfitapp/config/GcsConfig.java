@@ -49,6 +49,15 @@ import org.springframework.util.StringUtils;
  *     --dead-letter-topic=wardrobe-photo-uploads-dlq \
  *     --max-delivery-attempts=5
  * }</pre>
+ *
+ * <p>With {@code gcs.pubsub.max-outstanding-element-count} concurrent long-running extractions,
+ * ensure the subscription ack deadline covers worst-case single-message processing time
+ * (detect + sequential per-garment metadata). Otherwise Pub/Sub may redeliver while a handler
+ * is still running:
+ *
+ * <pre>{@code
+ * gcloud pubsub subscriptions update photo-uploaded-sub --ack-deadline=600
+ * }</pre>
  */
 @Configuration
 @EnableConfigurationProperties(GcsProperties.class)

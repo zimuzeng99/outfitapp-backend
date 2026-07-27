@@ -10,6 +10,7 @@ import com.openai.models.chat.completions.ChatCompletionCreateParams;
 import com.zimuzeng.outfitapp.common.exception.AppException;
 import com.zimuzeng.outfitapp.common.exception.ErrorCode;
 import com.zimuzeng.outfitapp.config.QwenProperties;
+import com.zimuzeng.outfitapp.config.QwenRequestOptions;
 import com.zimuzeng.outfitapp.garment.model.Colour;
 import com.zimuzeng.outfitapp.garment.model.GarmentCategory;
 import com.zimuzeng.outfitapp.garment.model.GarmentGroup;
@@ -92,11 +93,11 @@ public class QwenRetrievalCriteriaExtractor implements RetrievalCriteriaExtracto
 
     @Override
     public RetrievalCriteria extract(String context) {
-        ChatCompletionCreateParams params = ChatCompletionCreateParams.builder()
-                .model(qwenProperties.model())
-                .addSystemMessage(SYSTEM_INSTRUCTION)
-                .addUserMessage(PROMPT_TEMPLATE.formatted(context))
-                .responseFormat(ResponseFormatJsonObject.builder().build())
+        ChatCompletionCreateParams params = QwenRequestOptions.withoutThinking(ChatCompletionCreateParams.builder()
+                        .model(qwenProperties.model())
+                        .addSystemMessage(SYSTEM_INSTRUCTION)
+                        .addUserMessage(PROMPT_TEMPLATE.formatted(context))
+                        .responseFormat(ResponseFormatJsonObject.builder().build()))
                 .build();
 
         long startedAt = System.currentTimeMillis();
