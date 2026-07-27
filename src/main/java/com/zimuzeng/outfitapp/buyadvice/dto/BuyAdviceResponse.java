@@ -13,8 +13,6 @@ public record BuyAdviceResponse(
         String rationale,
         BuyAdviceCandidateResponse candidate,
         BuyAdviceOverlapResponse overlap,
-        Integer compatibleOutfitCountMin,
-        Integer compatibleOutfitCountMax,
         List<BuyAdviceOutfitResponse> potentialOutfits,
         String errorMessage) {
 }

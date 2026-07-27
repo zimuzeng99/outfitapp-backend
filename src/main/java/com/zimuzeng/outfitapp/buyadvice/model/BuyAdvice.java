@@ -111,14 +111,6 @@ public class BuyAdvice {
     @Column(name = "potential_outfits", columnDefinition = "jsonb")
     private List<BuyAdviceOutfitData> potentialOutfits;
 
-    /** Lower bound of estimated wardrobe-compatible outfits; may exceed potentialOutfits size. */
-    @Column(name = "compatible_outfit_count_min")
-    private Integer compatibleOutfitCountMin;
-
-    /** Upper bound of estimated wardrobe-compatible outfits; may exceed potentialOutfits size. */
-    @Column(name = "compatible_outfit_count_max")
-    private Integer compatibleOutfitCountMax;
-
     @Column(name = "error_message", length = 2000)
     private String errorMessage;
 

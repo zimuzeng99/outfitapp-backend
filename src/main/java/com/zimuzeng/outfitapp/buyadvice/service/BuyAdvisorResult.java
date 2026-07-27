@@ -8,8 +8,6 @@ public record BuyAdvisorResult(
         int outfitPotential,
         int uniqueness,
         String rationale,
-        int compatibleOutfitCountMin,
-        int compatibleOutfitCountMax,
         List<BuyAdviceOutfitData> potentialOutfits,
         List<UUID> relevantSimilarGarmentIds) {
 }

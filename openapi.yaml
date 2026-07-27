@@ -498,12 +498,11 @@ paths:
       description: |
         Returns job status. When `COMPLETED`, includes `wardrobeValue` (`HIGH` / `MEDIUM` / `LOW`),
         a short plain-language rationale, candidate metadata, optional similar owned pieces
-        (only when material to the rationale), a rough estimated range
-        (`compatibleOutfitCountMin`–`compatibleOutfitCountMax`) of wardrobe looks the candidate
-        enables, and up to a few example `potentialOutfits` that each include the uploaded
-        candidate plus wardrobe pieces. Internal scores and garment ids never appear in rationale
-        text. User-facing copy language is fixed at create (`lang` on POST).
-        Optional GET `lang` localizes candidate/wardrobe labels only (`label` vs `labelZh`).
+        (only when material to the rationale), and up to a few example `potentialOutfits` that
+        each include the uploaded candidate plus wardrobe pieces. Internal scores and garment
+        ids never appear in rationale text. User-facing copy language is fixed at create
+        (`lang` on POST). Optional GET `lang` localizes candidate/wardrobe labels only
+        (`label` vs `labelZh`).
       parameters:
         - $ref: "#/components/parameters/userId"
         - $ref: "#/components/parameters/adviceId"
@@ -1040,26 +1039,6 @@ components:
           allOf:
             - $ref: "#/components/schemas/BuyAdviceOverlapResponse"
           nullable: true
-        compatibleOutfitCountMin:
-          type: integer
-          minimum: 0
-          nullable: true
-          description: >
-            Lower bound of a rough estimate of how many strong, realistic outfits the candidate
-            can form with the user's wardrobe. Present when status is COMPLETED; may exceed the
-            length of potentialOutfits (curated examples, typically 0–3). Always ≤
-            compatibleOutfitCountMax. Both ends are 0 when the wardrobe cannot support outfits.
-            Null before completion.
-        compatibleOutfitCountMax:
-          type: integer
-          minimum: 0
-          nullable: true
-          description: >
-            Upper bound of a rough estimate of how many strong, realistic outfits the candidate
-            can form with the user's wardrobe. Present when status is COMPLETED; may exceed the
-            length of potentialOutfits (curated examples, typically 0–3). Always ≥
-            compatibleOutfitCountMin. Both ends are 0 when the wardrobe cannot support outfits.
-            Null before completion.
         potentialOutfits:
           type: array
           items:

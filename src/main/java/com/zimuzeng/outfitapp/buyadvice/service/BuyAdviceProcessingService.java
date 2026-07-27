@@ -135,8 +135,6 @@ public class BuyAdviceProcessingService {
             advice.setInternalScore(mapped.internalScore());
             advice.setWardrobeValue(mapped.wardrobeValue());
             advice.setRationale(advisorResult.rationale());
-            advice.setCompatibleOutfitCountMin(advisorResult.compatibleOutfitCountMin());
-            advice.setCompatibleOutfitCountMax(advisorResult.compatibleOutfitCountMax());
             advice.setPotentialOutfits(advisorResult.potentialOutfits());
             advice.setStatus(BuyAdviceStatus.COMPLETED);
             advice.setCompletedAt(Instant.now());

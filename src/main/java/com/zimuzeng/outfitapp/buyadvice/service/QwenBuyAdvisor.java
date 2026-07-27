@@ -35,7 +35,6 @@ import org.springframework.stereotype.Component;
 @Slf4j
 public class QwenBuyAdvisor implements BuyAdvisor {
 
-    private static final int MAX_COMPATIBLE_OUTFIT_COUNT = 50;
     private static final int MAX_EXAMPLE_OUTFIT_COUNT = 3;
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper()
@@ -79,12 +78,6 @@ public class QwenBuyAdvisor implements BuyAdvisor {
               exact same pieces with a different title or rationale. Prefer meaningfully
               different looks (different hero pieces, silhouettes, or occasions) when the
               wardrobe supports them
-            - compatibleOutfitCountMin / compatibleOutfitCountMax: a rough range for how many
-              strong, realistic outfits the candidate can form with the complementary wardrobe
-              list (min ≤ max). This may be higher than the 0–3 examples shown. Prefer a modest
-              spread when uncertain — not a single point estimate. Ground it in the wardrobe
-              you were given — do not invent a large total when few complementary pieces exist.
-              Empty or non-viable wardrobe → 0 / 0
             - relevantSimilarGarmentIds: ids from the similar-owned list ONLY when that
               similarity is material to the rationale you wrote (worth showing the user).
               Otherwise return an empty array. Never invent ids
@@ -95,8 +88,8 @@ public class QwenBuyAdvisor implements BuyAdvisor {
             complete an outfit WITH the candidate — never similar-owned pieces from list (2),
             and never anything that could stand in for the candidate's role (same type of
             garment). If the wardrobe is empty or cannot support a real outfit with this
-            candidate, return an empty potentialOutfits array, compatibleOutfitCountMin/Max 0,
-            and still score outfitPotential / uniqueness for gap-fill or redundancy.
+            candidate, return an empty potentialOutfits array, and still score outfitPotential /
+            uniqueness for gap-fill or redundancy.
 
             User-facing copy rules for top-level rationale and every outfit title/rationale
             (strict — these strings are shown to end users as-is):
@@ -104,8 +97,7 @@ public class QwenBuyAdvisor implements BuyAdvisor {
               "编号：..." / "ID为..." — refer to garments by colour, category, and style
               attributes instead (e.g. "the black knit dress")
             - Never mention scores, ratings, percentages, 0–100 scales, outfitPotential,
-              uniqueness, internalScore, compatibleOutfitCountMin, compatibleOutfitCountMax,
-              or numeric confidence
+              uniqueness, internalScore, or numeric confidence
             - Never mention internal field names (nearDuplicateCount, relevantSimilarGarmentIds,
               formality, layerRole, styleTags, etc.), wardrobe-value codes (HIGH/MEDIUM/LOW as
               labels), or SCREAMING_SNAKE enum tokens (e.g. SMART_CASUAL, CREW_NECK).
@@ -120,8 +112,6 @@ public class QwenBuyAdvisor implements BuyAdvisor {
               "outfitPotential": <0-100 integer>,
               "uniqueness": <0-100 integer>,
               "rationale": "<2-4 short plain-language sentences>",
-              "compatibleOutfitCountMin": <non-negative integer>,
-              "compatibleOutfitCountMax": <non-negative integer>,
               "relevantSimilarGarmentIds": ["<similar owned garment id>", ...],
               "potentialOutfits": [
                 {
@@ -248,48 +238,16 @@ public class QwenBuyAdvisor implements BuyAdvisor {
                     .distinct()
                     .toList();
 
-            int[] range = wardrobeIds.isEmpty()
-                    ? new int[] {0, 0}
-                    : sanitizeCompatibleOutfitCountRange(
-                            raw.compatibleOutfitCountMin(),
-                            raw.compatibleOutfitCountMax(),
-                            outfits.size());
-
             return new BuyAdvisorResult(
                     outfitPotential,
                     uniqueness,
                     sanitizeUserCopy("rationale", raw.rationale()),
-                    range[0],
-                    range[1],
                     outfits,
                     relevantSimilar);
         } catch (JsonProcessingException | IllegalArgumentException ex) {
             log.error("Failed to parse Qwen buy-advice response: {}", json, ex);
             throw new AppException(ErrorCode.QWEN_RESPONSE_PARSE_ERROR, ex, ex.getMessage());
         }
-    }
-
-    private static int[] sanitizeCompatibleOutfitCountRange(
-            Integer rawMin, Integer rawMax, int exampleOutfitCount) {
-        int min = rawMin == null ? exampleOutfitCount : rawMin;
-        int max = rawMax == null ? exampleOutfitCount : rawMax;
-        min = Math.max(0, Math.min(min, MAX_COMPATIBLE_OUTFIT_COUNT));
-        max = Math.max(0, Math.min(max, MAX_COMPATIBLE_OUTFIT_COUNT));
-        if (max < min) {
-            int swap = min;
-            min = max;
-            max = swap;
-        }
-        if (max < exampleOutfitCount) {
-            max = Math.min(exampleOutfitCount, MAX_COMPATIBLE_OUTFIT_COUNT);
-        }
-        if (min > max) {
-            min = max;
-        }
-        if (min > 0 && min == max && max < MAX_COMPATIBLE_OUTFIT_COUNT) {
-            max = max + 1;
-        }
-        return new int[] {min, max};
     }
 
     private BuyAdviceOutfitData sanitizeOutfit(BuyAdviceOutfitData outfit) {
@@ -420,8 +378,6 @@ public class QwenBuyAdvisor implements BuyAdvisor {
             Integer outfitPotential,
             Integer uniqueness,
             String rationale,
-            Integer compatibleOutfitCountMin,
-            Integer compatibleOutfitCountMax,
             List<String> relevantSimilarGarmentIds,
             List<RawOutfit> potentialOutfits) {
     }

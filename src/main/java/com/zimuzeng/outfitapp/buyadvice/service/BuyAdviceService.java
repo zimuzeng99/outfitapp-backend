@@ -121,8 +121,6 @@ public class BuyAdviceService {
         }
 
         BuyAdviceOverlapResponse overlap = null;
-        Integer compatibleOutfitCountMin = null;
-        Integer compatibleOutfitCountMax = null;
         List<BuyAdviceOutfitResponse> outfits = List.of();
         if (advice.getStatus() == BuyAdviceStatus.COMPLETED) {
             Map<UUID, GarmentMetadata> wardrobeById = garmentMetadataRepository
@@ -131,8 +129,6 @@ public class BuyAdviceService {
                     .collect(Collectors.toMap(gm -> gm.getGarment().getId(), Function.identity()));
 
             overlap = toOverlapResponse(advice.getOverlap(), wardrobeById, preferChinese);
-            compatibleOutfitCountMin = advice.getCompatibleOutfitCountMin();
-            compatibleOutfitCountMax = advice.getCompatibleOutfitCountMax();
             BuyAdviceOutfitGarmentResponse outfitCandidate = candidateGarment;
             outfits = (advice.getPotentialOutfits() == null ? List.<BuyAdviceOutfitData>of() : advice.getPotentialOutfits())
                     .stream()
@@ -148,8 +144,6 @@ public class BuyAdviceService {
                 sanitizeCopy("rationale", advice.getRationale()),
                 candidate,
                 overlap,
-                compatibleOutfitCountMin,
-                compatibleOutfitCountMax,
                 outfits,
                 advice.getErrorMessage());
     }
