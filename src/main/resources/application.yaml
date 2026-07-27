@@ -26,4 +26,4 @@ gcs:
 qwen:
   api-key: ${QWEN_API_KEY}
   model: qwen3.6-flash
-  base-url: https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1
+  base-url: https://dashscope-intl.aliyuncs.com/compatible-mode/v1
