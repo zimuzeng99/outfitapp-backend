@@ -15,9 +15,11 @@ import com.zimuzeng.outfitapp.outfit.dto.RecommendedOutfitResponse;
 import com.zimuzeng.outfitapp.outfit.model.RecommendedOutfit;
 import com.zimuzeng.outfitapp.outfit.model.RetrievalCriteria;
 import com.zimuzeng.outfitapp.user.repository.UserRepository;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -30,8 +32,10 @@ import org.springframework.transaction.annotation.Transactional;
  * candidate pool via {@link RetrievalCriteriaExtractor}'s structured filter (the "RAG retrieval"
  * step - a metadata filter over {@link GarmentMetadata} rather than vector search, since that
  * data is already rich and there's no embedding store), then hands the candidates to
- * {@link OutfitRecommender} to compose and justify concrete outfits. Nothing here is persisted -
- * each call recomputes a fresh recommendation.
+ * {@link OutfitRecommender} to compose and justify concrete outfits. Structurally invalid looks
+ * are dropped by {@link OutfitStructureValidator}; remaining looks are checked by
+ * {@link OutfitReasonablenessGate}. A single refill call runs when rejects leave fewer than a
+ * page. Nothing here is persisted - each call recomputes a fresh recommendation.
  */
 @Service
 @RequiredArgsConstructor
@@ -47,6 +51,8 @@ public class OutfitRecommendationService {
     private final RetrievalCriteriaExtractor criteriaExtractor;
     private final WardrobeCandidateFilter wardrobeCandidateFilter;
     private final OutfitRecommender outfitRecommender;
+    private final OutfitStructureValidator outfitStructureValidator;
+    private final OutfitReasonablenessGate outfitReasonablenessGate;
 
     @Transactional(readOnly = true)
     public OutfitRecommendationResponse recommend(UUID userId, OutfitRecommendationRequest request, String lang) {
@@ -79,32 +85,149 @@ public class OutfitRecommendationService {
             return new OutfitRecommendationResponse(request.context(), List.of(), false);
         }
 
-        List<RecommendedOutfit> fetched = outfitRecommender.recommend(
-                request.context(), filtered, request.excludeOutfits(), preferChinese);
-
-        // Page-size+1: a surplus outfit means more good looks existed than we return.
-        boolean hasMore = fetched.size() > MAX_OUTFITS_PER_BATCH;
-        List<RecommendedOutfit> outfits = hasMore
-                ? fetched.subList(0, MAX_OUTFITS_PER_BATCH)
-                : fetched;
-
         Map<UUID, GarmentMetadata> byGarmentId =
                 filtered.stream().collect(Collectors.toMap(gm -> gm.getGarment().getId(), gm -> gm));
 
-        List<RecommendedOutfitResponse> outfitResponses =
-                outfits.stream().map(outfit -> toResponse(outfit, byGarmentId, preferChinese)).toList();
+        List<RecommendedOutfit> firstBatch =
+                outfitRecommender.recommend(request.context(), filtered, request.excludeOutfits(), preferChinese);
+        ValidationBatch firstValidated = validateBatch(firstBatch, byGarmentId, criteria, request.context());
 
-        return new OutfitRecommendationResponse(request.context(), outfitResponses, hasMore);
+        List<RecommendedOutfit> valid = new ArrayList<>(firstValidated.accepted());
+        if (valid.size() < MAX_OUTFITS_PER_BATCH && firstValidated.rejectedCount() > 0) {
+            List<List<UUID>> refillExcludes = mergeExcludes(request.excludeOutfits(), firstBatch);
+            List<RecommendedOutfit> refillBatch =
+                    outfitRecommender.recommend(request.context(), filtered, refillExcludes, preferChinese);
+            ValidationBatch refillValidated =
+                    validateBatch(refillBatch, byGarmentId, criteria, request.context());
+            mergeUnique(valid, refillValidated.accepted());
+            log.info(
+                    "Outfit recommendation refill for user {}: firstAccepted={}, firstRejected={}, "
+                            + "refillAccepted={}, totalAccepted={}",
+                    userId,
+                    firstValidated.accepted().size(),
+                    firstValidated.rejectedCount(),
+                    refillValidated.accepted().size(),
+                    valid.size());
+        }
+
+        boolean hasMore = valid.size() > MAX_OUTFITS_PER_BATCH;
+        List<RecommendedOutfit> outfits = hasMore ? valid.subList(0, MAX_OUTFITS_PER_BATCH) : valid;
+
+        List<RecommendedOutfitResponse> outfitResponses = new ArrayList<>();
+        for (RecommendedOutfit outfit : outfits) {
+            RecommendedOutfitResponse response = toResponse(outfit, byGarmentId, preferChinese);
+            if (response != null) {
+                outfitResponses.add(response);
+            }
+        }
+
+        return new OutfitRecommendationResponse(request.context(), List.copyOf(outfitResponses), hasMore);
     }
 
+    private ValidationBatch validateBatch(
+            List<RecommendedOutfit> outfits,
+            Map<UUID, GarmentMetadata> byGarmentId,
+            RetrievalCriteria criteria,
+            String context) {
+        List<RecommendedOutfit> accepted = new ArrayList<>();
+        int rejected = 0;
+        for (RecommendedOutfit outfit : outfits) {
+            List<GarmentMetadata> pieces = resolvePieces(outfit, byGarmentId);
+            if (pieces == null) {
+                rejected++;
+                log.info("Rejected outfit after id resolve: title=\"{}\"", outfit.title());
+                continue;
+            }
+            OutfitStructureValidator.Result result = outfitStructureValidator.validate(pieces, criteria);
+            if (!result.accepted()) {
+                rejected++;
+                log.info(
+                        "Rejected structurally invalid outfit: title=\"{}\" reason={}",
+                        outfit.title(),
+                        result.reason());
+                continue;
+            }
+            OutfitReasonablenessGate.Decision decision =
+                    outfitReasonablenessGate.check(context, outfit, pieces);
+            if (!decision.accepted()) {
+                rejected++;
+                log.info(
+                        "Rejected unreasonable outfit: title=\"{}\" reason={}",
+                        outfit.title(),
+                        decision.reason());
+                continue;
+            }
+            accepted.add(outfit);
+        }
+        return new ValidationBatch(List.copyOf(accepted), rejected);
+    }
+
+    /**
+     * Returns null if any garment id is missing from the candidate map (fail closed — never return
+     * a shrunken outfit).
+     */
+    private static List<GarmentMetadata> resolvePieces(
+            RecommendedOutfit outfit, Map<UUID, GarmentMetadata> byGarmentId) {
+        if (outfit.garmentIds() == null || outfit.garmentIds().isEmpty()) {
+            return null;
+        }
+        List<GarmentMetadata> pieces = new ArrayList<>(outfit.garmentIds().size());
+        for (UUID id : outfit.garmentIds()) {
+            GarmentMetadata metadata = byGarmentId.get(id);
+            if (metadata == null) {
+                return null;
+            }
+            pieces.add(metadata);
+        }
+        return pieces;
+    }
+
+    private static List<List<UUID>> mergeExcludes(
+            List<List<UUID>> requestExcludes, List<RecommendedOutfit> fetched) {
+        List<List<UUID>> merged = new ArrayList<>();
+        if (requestExcludes != null) {
+            for (List<UUID> exclude : requestExcludes) {
+                if (exclude != null && !exclude.isEmpty()) {
+                    merged.add(exclude);
+                }
+            }
+        }
+        for (RecommendedOutfit outfit : fetched) {
+            if (outfit.garmentIds() != null && !outfit.garmentIds().isEmpty()) {
+                merged.add(outfit.garmentIds());
+            }
+        }
+        return merged;
+    }
+
+    private static void mergeUnique(List<RecommendedOutfit> into, List<RecommendedOutfit> extras) {
+        Set<Set<UUID>> seen = into.stream()
+                .map(o -> Set.copyOf(o.garmentIds()))
+                .collect(Collectors.toCollection(HashSet::new));
+        for (RecommendedOutfit outfit : extras) {
+            Set<UUID> key = Set.copyOf(outfit.garmentIds());
+            if (seen.add(key)) {
+                into.add(outfit);
+            }
+        }
+    }
+
+    /**
+     * Maps to response only when every garment id resolves; otherwise drops the outfit (fail
+     * closed).
+     */
     private RecommendedOutfitResponse toResponse(
             RecommendedOutfit outfit, Map<UUID, GarmentMetadata> byGarmentId, boolean preferChinese) {
-        List<GarmentSummaryResponse> garments = outfit.garmentIds().stream()
-                .map(byGarmentId::get)
-                .filter(Objects::nonNull)
-                .map(metadata -> toGarmentSummaryResponse(metadata, preferChinese))
-                .toList();
-        return new RecommendedOutfitResponse(outfit.title(), outfit.rationale(), garments);
+        List<GarmentSummaryResponse> garments = new ArrayList<>();
+        for (UUID id : outfit.garmentIds()) {
+            GarmentMetadata metadata = byGarmentId.get(id);
+            if (metadata == null) {
+                log.warn("Dropping outfit in response map due to unresolved garment id {}", id);
+                return null;
+            }
+            garments.add(toGarmentSummaryResponse(metadata, preferChinese));
+        }
+        return new RecommendedOutfitResponse(outfit.title(), outfit.rationale(), List.copyOf(garments));
     }
 
     /**
@@ -117,5 +240,8 @@ public class OutfitRecommendationService {
                 garment,
                 GarmentLabelLocale.displayLabel(garment, preferChinese),
                 gcsSignedUrlService.generateReadUrl(garment.getObjectKey()));
+    }
+
+    private record ValidationBatch(List<RecommendedOutfit> accepted, int rejectedCount) {
     }
 }

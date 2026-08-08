@@ -1,0 +1,17 @@
+spring:
+  main:
+    web-application-type: none
+
+outfitapp:
+  eval:
+    # Required via CLI: --outfitapp.eval.command=setup|recommend
+    # command:
+    fixtures-dir: src/test/resources/eval
+    manifest-file: manifest.json
+    artifacts-dir: eval/artifacts
+    results-dir: eval/results
+    # How many recommendation pages (5 outfits each) to fetch per context
+    recommend-batches: 1
+    # Max concurrent LLM judge calls during the recommend eval stage
+    judge-concurrency: 3
+    lang: en

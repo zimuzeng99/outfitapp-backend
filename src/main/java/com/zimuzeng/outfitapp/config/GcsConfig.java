@@ -16,9 +16,15 @@ import org.springframework.util.StringUtils;
 /**
  * Wires up the Google Cloud Storage client used to sign wardrobe photo upload URLs.
  *
- * <p>Credentials come from {@code GCS_SERVICE_ACCOUNT_JSON}, which must contain the full service
- * account key JSON (not a file path). The same credentials are used for Pub/Sub under
- * {@code gcs.pubsub}.
+ * <p>Credentials resolve in order:
+ *
+ * <ol>
+ *   <li>{@code GCS_SERVICE_ACCOUNT_JSON} — full service account key JSON (not a file path)
+ *   <li>Application Default Credentials — typically via {@code GOOGLE_APPLICATION_CREDENTIALS}
+ *       pointing at a key file
+ * </ol>
+ *
+ * <p>The same credentials are used for Pub/Sub under {@code gcs.pubsub}.
  *
  * <p>One-time infra setup (outside the app), so GCS publishes a Pub/Sub message whenever a
  * wardrobe photo upload finishes:
@@ -66,15 +72,21 @@ public class GcsConfig {
     @Bean
     public GoogleCredentials googleCredentials(GcsProperties gcsProperties) {
         String json = gcsProperties.serviceAccountJson();
-        if (!StringUtils.hasText(json)) {
-            throw new IllegalStateException(
-                    "GCS_SERVICE_ACCOUNT_JSON is required and must contain the service account key JSON");
+        if (StringUtils.hasText(json)) {
+            try {
+                return ServiceAccountCredentials.fromStream(
+                        new ByteArrayInputStream(json.getBytes(StandardCharsets.UTF_8)));
+            } catch (IOException ex) {
+                throw new UncheckedIOException("Failed to parse GCS_SERVICE_ACCOUNT_JSON", ex);
+            }
         }
         try {
-            return ServiceAccountCredentials.fromStream(
-                    new ByteArrayInputStream(json.getBytes(StandardCharsets.UTF_8)));
+            return GoogleCredentials.getApplicationDefault();
         } catch (IOException ex) {
-            throw new UncheckedIOException("Failed to parse GCS_SERVICE_ACCOUNT_JSON", ex);
+            throw new IllegalStateException(
+                    "Set GCS_SERVICE_ACCOUNT_JSON (inline key JSON) or GOOGLE_APPLICATION_CREDENTIALS"
+                            + " (path to a service account key file)",
+                    ex);
         }
     }
 

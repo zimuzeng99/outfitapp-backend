@@ -18,8 +18,8 @@ public final class QwenRequestOptions {
     }
 
     /**
-     * Keep thinking but cap reasoning tokens — for outfit composition and buy advice where
-     * judgment quality matters more than raw latency.
+     * Keep thinking but cap reasoning tokens — for outfit composition, buy advice, and eval
+     * judge where judgment quality matters more than raw latency.
      */
     public static ChatCompletionCreateParams.Builder withThinkingBudget(
             ChatCompletionCreateParams.Builder builder, int thinkingBudget) {

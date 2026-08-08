@@ -37,3 +37,9 @@ secrets/
 
 ### Images ###
 images/
+
+### Eval fixtures & results ###
+src/test/resources/eval/outfits/*
+!src/test/resources/eval/outfits/.gitkeep
+eval/artifacts/
+eval/results/

@@ -28,10 +28,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 /**
- * Composes outfits from a candidate pool using natural-language garment descriptions as JSON
- * text (no images, no structured metadata). Structured filtering happens upstream. Requests up
- * to {@link #FETCH_LIMIT} so the caller can apply page-size+1 pagination ({@code hasMore} when a
- * surplus outfit exists).
+ * Composes outfits from a candidate pool. Candidates include structured slot/formality fields plus
+ * a natural-language description (no images). Upstream metadata filtering narrows the pool;
+ * {@link OutfitStructureValidator} enforces wearable structure after parse. Requests up to
+ * {@link #FETCH_LIMIT} so the caller can apply page-size+1 pagination and absorb validation rejects.
  *
  * <p>Qwen's {@code json_object} mode requires a JSON object root, so the response is wrapped as
  * {@code {"outfits":[...]}} rather than a bare array.
@@ -41,8 +41,11 @@ import org.springframework.stereotype.Component;
 @Slf4j
 public class QwenOutfitRecommender implements OutfitRecommender {
 
-    /** One more than the client page size so surplus can drive {@code hasMore}. */
-    private static final int FETCH_LIMIT = 6;
+    /**
+     * Surplus over the client page size so validation rejects and {@code hasMore} still leave a
+     * full page when possible.
+     */
+    private static final int FETCH_LIMIT = 10;
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper()
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
@@ -50,31 +53,44 @@ public class QwenOutfitRecommender implements OutfitRecommender {
     private static final String SYSTEM_INSTRUCTION = """
             You help people pick outfits from their wardrobe. You will be given a free-text
             description of what the user is dressing for, and a JSON array of candidate garments
-            from their wardrobe. Each candidate has only a unique "id" and a natural-language
-            "description". Structured metadata was already used to filter this pool — do not
-            assume or invent attributes that are not stated in a description.
+            from their wardrobe. Each candidate has a unique "id", a natural-language
+            "description", and structured fields (garmentGroup, category, primaryColour,
+            layerRole, formality, warmth, occasions, seasons). Use the structured fields for
+            slot, layering, and formality decisions; use "description" for style/compatibility
+            nuance. Do not invent attributes that contradict the structured fields.
 
-            Use ONLY the user's request and each garment's "description" to judge fit,
-            compatibility, occasion, weather, and style. Compose complete, wearable outfits
-            using ONLY the garments provided - never invent an id or describe a garment that
-            isn't in the candidate list. Each outfit should make sense worn together. Layering
-            is fine and encouraged when it fits the weather or look (e.g. tee under sweater
-            under jacket). Avoid nonsensical duplicates like two pairs of shoes, or two jackets
-            that aren't intentional layering. Each outfit must use a unique garmentIds
-            combination — do not repeat the exact same pieces with a different title or
-            rationale. Prefer meaningfully different looks (different hero pieces, silhouettes,
-            or styling directions) when the wardrobe supports them.
+            Compose complete, wearable outfits using ONLY the garments provided - never invent
+            an id or describe a garment that isn't in the candidate list. Every garmentIds entry
+            must be an exact candidate id; if you cannot form a valid full outfit, omit that
+            look entirely (do not return partial id lists).
+
+            Structure contract (mandatory — invalid outfits will be discarded):
+            - Core coverage: (TOP + BOTTOM) OR exactly one ONE_PIECE
+            - Never combine ONE_PIECE with TOP or BOTTOM (e.g. no dress + jeans)
+            - At most one BOTTOM, one ONE_PIECE, one FOOTWEAR
+            - Footwear is optional; include it when it strengthens the look for the request
+            - Layering is fine (tee under sweater under jacket). Multiple TOP/OUTERWEAR pieces
+              need distinct layerRoles (BASE / MID / OUTER). Never stack two BASE tops or wear
+              a camisole over a blouse
+            - Avoid two pairs of shoes or two jackets that aren't intentional layering
+            - Respect formality for the request (e.g. black-tie needs dressier pieces)
+
+            Each outfit must use a unique garmentIds combination — do not repeat the exact same
+            pieces with a different title or rationale. Prefer meaningfully different looks
+            (different hero pieces, silhouettes, or styling directions) when the wardrobe
+            supports them.
 
             Quality bar (strict): only recommend an outfit if it genuinely suits the user's
             request. If the candidates cannot support a sensible outfit for that request,
-            return an empty "outfits" array. Never pad with weak, forced, or off-request
-            looks. Prefer returning a 6th good outfit when one exists so the client can tell
-            that more looks are available; otherwise return fewer (including zero).
+            return an empty "outfits" array. Never pad with weak, forced, incomplete, or
+            off-request looks. Prefer returning up to 10 good outfits when they exist so the
+            client can page; otherwise return fewer (including zero).
 
             For each outfit you do return, give a title and a brief rationale explaining why it
             works for the request. Put garment ids ONLY in the "garmentIds" array. Never
             mention ids, UUIDs, or phrases like "(id: ...)" in "title" or "rationale" - refer
             to garments using wording from their descriptions (e.g. colour and garment type).
+            Every garment mentioned in the rationale must appear in garmentIds.
 
             User-facing copy rules for every outfit title and rationale (strict — these strings
             are shown to end users as-is):
@@ -214,12 +230,22 @@ public class QwenOutfitRecommender implements OutfitRecommender {
         try {
             RawResponse raw = OBJECT_MAPPER.readValue(json, RawResponse.class);
             List<RawOutfit> outfits = raw.outfits() == null ? List.of() : raw.outfits();
-            return dedupeOutfits(outfits.stream()
-                    .map(outfit -> outfit.toRecommendedOutfit(candidateIds))
-                    .map(this::sanitizeOutfit)
-                    .filter(outfit -> !outfit.garmentIds().isEmpty())
-                    .filter(outfit -> !excludedSets.contains(Set.copyOf(outfit.garmentIds())))
-                    .toList());
+            List<RecommendedOutfit> accepted = new ArrayList<>();
+            for (RawOutfit outfit : outfits) {
+                RecommendedOutfit parsed = toRecommendedOutfitFailClosed(outfit, candidateIds);
+                if (parsed == null) {
+                    continue;
+                }
+                RecommendedOutfit sanitized = sanitizeOutfit(parsed);
+                if (sanitized.garmentIds().isEmpty()) {
+                    continue;
+                }
+                if (excludedSets.contains(Set.copyOf(sanitized.garmentIds()))) {
+                    continue;
+                }
+                accepted.add(sanitized);
+            }
+            return dedupeOutfits(accepted);
         } catch (JsonProcessingException | IllegalArgumentException ex) {
             log.error("Failed to parse Qwen outfit-composition response: {}", json, ex);
             throw new AppException(ErrorCode.QWEN_RESPONSE_PARSE_ERROR, ex, ex.getMessage());
@@ -231,6 +257,43 @@ public class QwenOutfitRecommender implements OutfitRecommender {
                 UserFacingCopySanitizer.sanitize("outfit.title", outfit.title()),
                 UserFacingCopySanitizer.sanitize("outfit.rationale", outfit.rationale()),
                 outfit.garmentIds());
+    }
+
+    /**
+     * Fail closed: any unknown or unparseable id discards the whole outfit (never silently shrink
+     * to a partial look).
+     */
+    private RecommendedOutfit toRecommendedOutfitFailClosed(RawOutfit outfit, Set<UUID> candidateIds) {
+        List<String> garmentIds = outfit.garmentIds();
+        if (garmentIds == null || garmentIds.isEmpty()) {
+            return null;
+        }
+        List<UUID> ids = new ArrayList<>();
+        for (String raw : garmentIds) {
+            if (raw == null || raw.isBlank()) {
+                continue;
+            }
+            UUID id = tryParseUuid(raw);
+            if (id == null || !candidateIds.contains(id)) {
+                log.warn("Dropping outfit due to invalid/unknown garment id: {}", raw);
+                return null;
+            }
+            if (!ids.contains(id)) {
+                ids.add(id);
+            }
+        }
+        if (ids.isEmpty()) {
+            return null;
+        }
+        return new RecommendedOutfit(outfit.title(), outfit.rationale(), List.copyOf(ids));
+    }
+
+    private static UUID tryParseUuid(String value) {
+        try {
+            return UUID.fromString(value);
+        } catch (IllegalArgumentException ex) {
+            return null;
+        }
     }
 
     /** Keeps the first outfit per garment-ID set; caps at {@link #FETCH_LIMIT}. */
@@ -250,12 +313,34 @@ public class QwenOutfitRecommender implements OutfitRecommender {
         return List.copyOf(unique);
     }
 
-    private record CandidateGarmentView(String id, String description) {
+    private record CandidateGarmentView(
+            String id,
+            String description,
+            String garmentGroup,
+            String category,
+            String primaryColour,
+            String layerRole,
+            int formality,
+            String warmth,
+            List<String> occasions,
+            List<String> seasons) {
 
         static CandidateGarmentView fromEntity(GarmentMetadata metadata) {
             return new CandidateGarmentView(
                     metadata.getGarment().getId().toString(),
-                    effectiveDescription(metadata));
+                    effectiveDescription(metadata),
+                    enumName(metadata.getGarmentGroup()),
+                    enumName(metadata.getCategory()),
+                    enumName(metadata.getPrimaryColour()),
+                    enumName(metadata.getLayerRole()),
+                    metadata.getFormality() == null ? 3 : metadata.getFormality(),
+                    enumName(metadata.getWarmth()),
+                    metadata.getOccasions() == null
+                            ? List.of()
+                            : metadata.getOccasions().stream().map(Enum::name).toList(),
+                    metadata.getSeasons() == null
+                            ? List.of()
+                            : metadata.getSeasons().stream().map(Enum::name).toList());
         }
 
         /**
@@ -277,6 +362,10 @@ public class QwenOutfitRecommender implements OutfitRecommender {
             return group.isBlank() ? base : base + " (" + group + ")";
         }
 
+        private static String enumName(Enum<?> value) {
+            return value == null ? "" : value.name();
+        }
+
         private static String enumLabel(Enum<?> value) {
             if (value == null) {
                 return "";
@@ -289,22 +378,5 @@ public class QwenOutfitRecommender implements OutfitRecommender {
     }
 
     private record RawOutfit(String title, String rationale, List<String> garmentIds) {
-
-        RecommendedOutfit toRecommendedOutfit(Set<UUID> candidateIds) {
-            List<UUID> validIds = (garmentIds == null ? List.<String>of() : garmentIds).stream()
-                    .map(RawOutfit::tryParseUuid)
-                    .filter(id -> id != null && candidateIds.contains(id))
-                    .distinct()
-                    .toList();
-            return new RecommendedOutfit(title, rationale, validIds);
-        }
-
-        private static UUID tryParseUuid(String value) {
-            try {
-                return UUID.fromString(value);
-            } catch (IllegalArgumentException ex) {
-                return null;
-            }
-        }
     }
 }
