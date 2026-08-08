@@ -31,6 +31,6 @@ qwen:
   model: qwen3.6-flash
   base-url: https://dashscope-intl.aliyuncs.com/compatible-mode/v1
   # Cap CoT on outfit recommend, buy advice, and eval judge; detection/metadata/retrieval turn thinking off.
-  advice-thinking-budget: 1024
+  advice-thinking-budget: 256
   # LLM accept/reject after OutfitStructureValidator; disable to skip the second model call.
   reasonableness-enabled: true

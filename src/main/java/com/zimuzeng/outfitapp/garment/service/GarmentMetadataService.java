@@ -13,10 +13,10 @@ import org.springframework.transaction.annotation.Transactional;
  * Runs metadata extraction for a single {@link Garment} crop via {@link GarmentMetadataAnalyzer}
  * and persists the result as a {@link GarmentMetadata} row.
  *
- * <p>Deliberately has no try/catch of its own: {@link GarmentDetectionService} calls this
- * synchronously, right after uploading and saving each garment crop, inside its own try/catch, so
- * any failure here propagates up and is handled by that pipeline's existing all-or-nothing
- * retry logic (the whole item, including detection and cropping, is retried together).
+ * <p>{@link #analyze} is safe to call from worker threads (no JPA). {@link #persist} must run on
+ * the request thread that owns the Hibernate session. {@link GarmentDetectionService} analyzes
+ * crops in parallel, then persists sequentially so failures still fail the whole item and retry
+ * via Pub/Sub / DLQ.
  */
 @Service
 @RequiredArgsConstructor
@@ -26,10 +26,13 @@ public class GarmentMetadataService {
     private final GarmentMetadataAnalyzer garmentMetadataAnalyzer;
     private final GarmentMetadataRepository garmentMetadataRepository;
 
-    @Transactional
-    public void extractMetadata(Garment garment, byte[] cropBytes, String contentType) {
-        ExtractedGarmentMetadata extracted = garmentMetadataAnalyzer.analyze(cropBytes, contentType, garment.getLabel());
+    /** Qwen/vision call only — no persistence. */
+    public ExtractedGarmentMetadata analyze(byte[] cropBytes, String contentType, String label) {
+        return garmentMetadataAnalyzer.analyze(cropBytes, contentType, label);
+    }
 
+    @Transactional
+    public void persist(Garment garment, ExtractedGarmentMetadata extracted) {
         garmentMetadataRepository.save(GarmentMetadata.builder()
                 .garment(garment)
                 .garmentGroup(extracted.garmentGroup())

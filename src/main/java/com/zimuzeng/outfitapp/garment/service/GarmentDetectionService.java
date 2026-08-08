@@ -7,6 +7,7 @@ import com.google.cloud.storage.Storage;
 import com.zimuzeng.outfitapp.common.image.ImageCropper;
 import com.zimuzeng.outfitapp.config.GcsProperties;
 import com.zimuzeng.outfitapp.garment.model.DetectedGarment;
+import com.zimuzeng.outfitapp.garment.model.ExtractedGarmentMetadata;
 import com.zimuzeng.outfitapp.garment.model.Garment;
 import com.zimuzeng.outfitapp.garment.model.GarmentExtraction;
 import com.zimuzeng.outfitapp.garment.model.GarmentExtractionStatus;
@@ -15,7 +16,13 @@ import com.zimuzeng.outfitapp.garment.repository.GarmentRepository;
 import com.zimuzeng.outfitapp.upload.model.UploadItem;
 import com.zimuzeng.outfitapp.upload.repository.UploadItemRepository;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -23,7 +30,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Runs the garment-detection + cropping pipeline for a single {@link UploadItem} via
- * {@link GarmentDetector}.
+ * {@link SubjectScopedGarmentDetector} (primary-person crop, then multi-garment detection).
  *
  * <p>Deliberately has no dependency on {@code UploadService} (and vice versa) — upload lifecycle
  * and AI processing are separate concerns. {@link com.zimuzeng.outfitapp.upload.service.UploadNotificationListener}
@@ -38,11 +45,13 @@ import org.springframework.transaction.annotation.Transactional;
 public class GarmentDetectionService {
 
     private static final int MAX_ERROR_MESSAGE_LENGTH = 2000;
+    /** Cap concurrent Qwen metadata calls per photo to avoid rate-limit spikes. */
+    private static final int METADATA_CONCURRENCY = 4;
 
     private final UploadItemRepository uploadItemRepository;
     private final GarmentExtractionRepository garmentExtractionRepository;
     private final GarmentRepository garmentRepository;
-    private final GarmentDetector garmentDetector;
+    private final SubjectScopedGarmentDetector subjectScopedGarmentDetector;
     private final GarmentMetadataService garmentMetadataService;
     private final ImageCropper imageCropper;
     private final Storage storage;
@@ -73,7 +82,8 @@ public class GarmentDetectionService {
         try {
             byte[] imageBytes = downloadFromGcs(item.getObjectKey());
 
-            List<DetectedGarment> detected = garmentDetector.detectGarments(imageBytes, item.getContentType());
+            List<DetectedGarment> detected = subjectScopedGarmentDetector.detectGarments(
+                    imageBytes, item.getContentType());
             log.info("Detected {} garment(s) for item {}: {}", detected.size(), item.getId(),
                     detected.stream().map(DetectedGarment::label).toList());
 
@@ -82,6 +92,7 @@ public class GarmentDetectionService {
             deleteExistingCrops(item);
             garmentRepository.deleteByUploadItem(item);
 
+            List<PreparedGarment> prepared = new ArrayList<>(detected.size());
             int index = 0;
             for (DetectedGarment garment : detected) {
                 byte[] crop = imageCropper.crop(imageBytes, item.getContentType(), garment.box2d());
@@ -102,13 +113,19 @@ public class GarmentDetectionService {
                         .boxYMax(garment.box2d()[2])
                         .boxXMax(garment.box2d()[3])
                         .build());
-                garmentMetadataService.extractMetadata(savedGarment, crop, "image/jpeg");
+                // Capture label on this thread — workers must not touch the JPA entity.
+                prepared.add(new PreparedGarment(savedGarment, crop, garment.label()));
                 index++;
+            }
+
+            List<ExtractedGarmentMetadata> extracted = analyzeMetadataInParallel(item.getId(), prepared);
+            for (int i = 0; i < prepared.size(); i++) {
+                garmentMetadataService.persist(prepared.get(i).garment(), extracted.get(i));
             }
 
             extraction.setStatus(GarmentExtractionStatus.COMPLETED);
             extraction.setCompletedAt(Instant.now());
-            extraction.setAiModel(garmentDetector.modelName());
+            extraction.setAiModel(subjectScopedGarmentDetector.modelName());
             extraction.setLastErrorMessage(null);
             garmentExtractionRepository.save(extraction);
             log.info("Garment extraction for item {} completed with {} garment(s)", item.getId(), detected.size());
@@ -122,6 +139,55 @@ public class GarmentDetectionService {
             // GcsConfig) is the sole retry cap for this whole pipeline, not this service.
             throw ex;
         }
+    }
+
+    private List<ExtractedGarmentMetadata> analyzeMetadataInParallel(
+            UUID itemId, List<PreparedGarment> prepared) {
+        if (prepared.isEmpty()) {
+            return List.of();
+        }
+
+        int concurrency = Math.min(METADATA_CONCURRENCY, prepared.size());
+        log.info("Extracting metadata for item {} with concurrency={} (garments={})",
+                itemId, concurrency, prepared.size());
+
+        List<ExtractedGarmentMetadata> results = new ArrayList<>(prepared.size());
+        for (int i = 0; i < prepared.size(); i++) {
+            results.add(null);
+        }
+
+        try (ExecutorService executor = Executors.newFixedThreadPool(concurrency)) {
+            List<Future<AnalyzedGarment>> futures = new ArrayList<>(prepared.size());
+            for (int i = 0; i < prepared.size(); i++) {
+                PreparedGarment preparedGarment = prepared.get(i);
+                int garmentIndex = i;
+                futures.add(executor.submit(() -> {
+                    ExtractedGarmentMetadata metadata = garmentMetadataService.analyze(
+                            preparedGarment.cropBytes(), "image/jpeg", preparedGarment.label());
+                    return new AnalyzedGarment(garmentIndex, metadata);
+                }));
+            }
+
+            for (Future<AnalyzedGarment> future : futures) {
+                try {
+                    AnalyzedGarment analyzed = future.get();
+                    results.set(analyzed.index(), analyzed.metadata());
+                } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(
+                            "Interrupted while extracting garment metadata for item " + itemId, ex);
+                } catch (ExecutionException ex) {
+                    Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
+                    if (cause instanceof RuntimeException runtimeException) {
+                        throw runtimeException;
+                    }
+                    throw new IllegalStateException(
+                            "Garment metadata extraction failed for item " + itemId, cause);
+                }
+            }
+        }
+
+        return results;
     }
 
     private byte[] downloadFromGcs(String objectKey) {
@@ -154,5 +220,11 @@ public class GarmentDetectionService {
             return null;
         }
         return message.length() > MAX_ERROR_MESSAGE_LENGTH ? message.substring(0, MAX_ERROR_MESSAGE_LENGTH) : message;
+    }
+
+    private record PreparedGarment(Garment garment, byte[] cropBytes, String label) {
+    }
+
+    private record AnalyzedGarment(int index, ExtractedGarmentMetadata metadata) {
     }
 }
