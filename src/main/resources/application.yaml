@@ -24,7 +24,7 @@ gcs:
     subscription-id: photo-uploaded-sub
     # Concurrent GCS finalize handlers on this JVM (batch photos extract in parallel).
     parallel-pull-count: 1
-    max-outstanding-element-count: 3
+    max-outstanding-element-count: 6
 
 qwen:
   api-key: ${QWEN_API_KEY}
